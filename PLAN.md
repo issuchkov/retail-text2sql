@@ -22,7 +22,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 4 Agent assembly | done |
 | 5 CLI | done (`/trace`, `/stats` in stage 7) |
 | 6 Resilience | done |
-| 7 Observability | todo |
+| 7 Observability | done |
 | 8 Golden bucket + saved definitions | todo |
 | 9 Evals | todo |
 | 10 Docs (HLD, technical explanation, README) | todo |
@@ -198,6 +198,17 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
 - `/trace` (last turn timeline), `/stats` (session metrics from SPEC §7).
 - Tests: a fake turn produces the expected span sequence; no PII in trace lines.
 - Note in docs: ADK OpenTelemetry → Cloud Trace for production.
+- Done 2026-11-03: `observability/tracing.py` (ADK `TracePlugin` via `App`: user message,
+  model calls with model/attempts/tokens/latency, tool calls with SQL/guard rule/rows/bytes,
+  turn summary; metadata only, every string redacted) and `observability/metrics.py`
+  (`/stats` and `python -m retail_agent.observability.metrics`); CLI `/trace`, `/stats`,
+  `/feedback`. 9 new tests (204 total), incl. no PII, rows or answer text in traces.
+  Live as Bob: `/trace` showed 4 model calls / 2 queries / 15.4 s for a brand-share
+  question, with one guard `syntax` rejection. The trace showed why: the model added a
+  redundant `brand IN ('Levi''s', …)` filter. The instruction now says the scope is
+  applied server-side, and a rerun used no brand filter (2 queries, no rejection; one
+  run). The footer now counts executed and rejected queries separately (it said 3 while
+  the trace said 2).
 
 ### 8 Golden bucket + saved definitions (1 h) — SPEC §8 R1, R4, §3.4
 - `golden/trios/*.yaml` in the SPEC §8 format: ~20 Question → SQL (logical table names) →

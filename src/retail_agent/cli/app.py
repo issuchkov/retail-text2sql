@@ -16,12 +16,16 @@ from rich.table import Table
 from retail_agent.agent.services import Services, build_services
 from retail_agent.cli.chat import ChatSession, Turn, footer
 from retail_agent.config import Settings, load_env
+from retail_agent.observability.metrics import summarize
 
-COMMANDS = {"sql", "reports", "new", "quit", "help"}
+COMMANDS = {"sql", "trace", "stats", "feedback", "reports", "new", "quit", "help"}
 HELP = """Ask questions about your brands' sales, products and customers in plain language.
 
 Commands:
   /sql      show the SQL behind the last answer
+  /trace    the steps of the last answer: model calls, queries, timings
+  /stats    metrics for this conversation
+  /feedback good|bad [note]   rate the last answer
   /reports  list your saved reports
   /new      start a new conversation
   /help     this help
@@ -83,6 +87,12 @@ class App:
             self.console.print(HELP)
         elif name == "sql":
             self.show_sql()
+        elif name == "trace":
+            self.show_trace()
+        elif name == "stats":
+            self.show_stats()
+        elif name == "feedback":
+            self.record_feedback(line)
         elif name == "reports":
             self.show_reports()
         elif name == "new":
@@ -139,6 +149,75 @@ class App:
             self.console.print(f"[dim]-- query {i} (your brand scope is applied server-side)[/]")
             self.console.print(Syntax(sql, "sql", word_wrap=True))
 
+    def show_trace(self) -> None:
+        turn = self.chat.last_turn
+        spans = self.chat.tracer.read(trace_id=turn.trace_id) if turn else []
+        if not spans:
+            self.console.print("No trace for the last answer yet.")
+            return
+        table = Table(title=f"trace {turn.trace_id}")
+        for column in ("at ms", "step", "detail", "ms"):
+            table.add_column(column)
+        for span in spans:
+            table.add_row(
+                str(span.get("at_ms", "")),
+                str(span.get("kind")),
+                _span_detail(span),
+                "" if span.get("duration_ms") is None else str(span["duration_ms"]),
+            )
+        self.console.print(table)
+
+    def show_stats(self) -> None:
+        m = summarize(self.chat.tracer.read(session_id=self.chat.session_id))
+        table = Table(title="This conversation")
+        table.add_column("metric")
+        table.add_column("value")
+        rows = [
+            ("Turns", m["turns"]),
+            ("Turn success rate", _pct(m["turn_success_rate"])),
+            ("SQL first-try success", _pct(m["sql_first_try_success_rate"])),
+            ("Self-corrected after a failed query", _pct(m["self_correction_rate"])),
+            ("Empty results", _pct(m["empty_result_rate"])),
+            ("Guard rejections", _counts(m["guard_rejections_by_rule"])),
+            ("PII redactions (turns)", m["pii_redactions"]),
+            ("Model calls / fallbacks", f"{m['model_calls']} / {m['model_fallbacks']}"),
+            ("Model attempts", _counts(m["model_attempts_by_outcome"])),
+            ("Tokens in / out", f"{m['tokens_in']} / {m['tokens_out']}"),
+            ("BigQuery MB per turn", _mb(m["bytes_per_turn_avg"])),
+            ("Turn latency p50 / p95 ms", _p(m["turn_latency_ms"])),
+            ("Model call latency p50 / p95 ms", _p(m["model_latency_ms"])),
+            ("Tool latency p50 / p95 ms", _p(m["tool_latency_ms"])),
+            ("Deletes confirmed / cancelled", _counts(m["confirmations"])),
+            ("Errors", _counts(m["errors_by_type"])),
+            ("Feedback", _counts(m["feedback"])),
+        ]
+        for label, value in rows:
+            table.add_row(label, str(value))
+        self.console.print(table)
+
+    def record_feedback(self, line: str) -> None:
+        _, _, rest = line.strip().partition(" ")
+        rating, _, note = rest.strip().partition(" ")
+        rating = rating.lower()
+        if rating not in {"good", "bad"}:
+            self.console.print("Usage: /feedback good|bad [note]")
+            return
+        turn = self.chat.last_turn
+        if turn is None:
+            self.console.print("Ask something first, then rate the answer.")
+            return
+        self.chat.tracer.write(
+            {
+                "kind": "feedback",
+                "trace_id": turn.trace_id,
+                "session_id": self.chat.session_id,
+                "user_id": self.chat.user_id,
+                "rating": rating,
+                "note": note.strip()[:1000],
+            }
+        )
+        self.console.print("[dim]Thanks — feedback recorded.[/]")
+
     def show_reports(self) -> None:
         reports = self.services.store.list(self.chat.user_id)
         if not reports:
@@ -152,6 +231,55 @@ class App:
                 str(r.id), r.title, r.created_at.date().isoformat(), ", ".join(r.entities)
             )
         self.console.print(table)
+
+
+def _span_detail(span: dict) -> str:
+    kind = span.get("kind")
+    if kind == "model_call":
+        attempts = ", ".join(f"{a['model']}:{a['outcome']}" for a in span.get("attempts") or [])
+        calls = ",".join(span.get("function_calls") or []) or "answer"
+        return (
+            f"{span.get('model')} → {calls} · {span.get('tokens_in')}/{span.get('tokens_out')} tok"
+            + (f" · {attempts}" if attempts and len(span.get("attempts") or []) > 1 else "")
+        )
+    if kind == "tool_call":
+        bits = [str(span.get("tool")), str(span.get("status"))]
+        for key in ("rule", "error_kind", "row_count"):
+            if span.get(key) is not None:
+                bits.append(f"{key}={span[key]}")
+        if span.get("bytes_processed"):
+            bits.append(f"{span['bytes_processed'] / 1e6:.0f} MB")
+        return " ".join(bits)
+    if kind == "turn":
+        calls, queries = span.get("model_calls"), span.get("queries")
+        return f"{span.get('status')} · {calls} model calls · {queries} queries"
+    if kind == "user_message":
+        return (
+            "confirmation reply" if span.get("confirmation_reply") else f"{span.get('chars')} chars"
+        )
+    return str(span.get("error") or "")
+
+
+NA = "-"
+
+
+def _pct(value: float | None) -> str:
+    return NA if value is None else f"{value:.0%}"
+
+
+def _mb(value: float | None) -> str:
+    return NA if value is None else f"{value / 1e6:.0f}"
+
+
+def _p(latency: dict) -> str:
+    def fmt(v):
+        return NA if v is None else f"{v:.0f}"
+
+    return f"{fmt(latency['p50'])} / {fmt(latency['p95'])}"
+
+
+def _counts(counts: dict) -> str:
+    return ", ".join(f"{k} {v}" for k, v in counts.items()) or NA
 
 
 def _configure_logging(settings: Settings) -> None:

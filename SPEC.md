@@ -223,7 +223,9 @@ security, backups under a retention policy (HLD).
   tokens, latency, finish reason, retries), each tool call (name, arguments, SQL,
   guard decision, dry-run bytes, rows, latency, errors), confirmations, output-guard
   redactions, final answer status. Prototype: JSON lines in `logs/traces.jsonl`.
-- **CLI:** `/trace` shows the last turn's timeline; `/stats` shows session metrics.
+- **CLI:** `/trace` shows the last turn's timeline; `/stats` shows session metrics;
+  `/feedback good|bad [note]` records the user's rating of the last answer in the trace.
+  Traces hold metadata only (no answer text, no result rows); every string is redacted.
 - **Metrics:** turn success rate, refusal rate by reason, SQL first-try success and
   self-correction rate, empty-result rate, guard rejections by rule, PII redactions,
   model errors/fallbacks, latency p50/p95 per turn and per step, tokens and BigQuery

@@ -12,6 +12,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from google.adk.apps import App
 from google.adk.models.base_llm import BaseLlm
 from google.adk.runners import Runner
 from google.adk.sessions import BaseSessionService, DatabaseSessionService
@@ -21,6 +22,7 @@ from google.genai import types
 from retail_agent.agent.agent import APP_NAME, build_agent
 from retail_agent.agent.resilience import ModelUnavailable
 from retail_agent.agent.services import Services
+from retail_agent.observability.tracing import TracePlugin, TraceWriter, write_failed_turn
 
 log = logging.getLogger("retail_agent.cli")
 
@@ -40,18 +42,24 @@ class Confirmation:
 class Turn:
     trace_id: str
     answer: str = ""
-    queries: list[str] = field(default_factory=list)
+    queries: list[str] = field(default_factory=list)  # SQL the model wrote, for /sql
+    executed: int = 0  # queries that reached BigQuery
+    rejected: int = 0  # queries the guard rejected
     bytes_processed: int = 0
     confirmation: Confirmation | None = None
     error: str | None = None
 
 
 def footer(turn: Turn) -> str:
-    n = len(turn.queries)
-    if not n:
-        return f"trace {turn.trace_id} · no queries"
-    label = "query" if n == 1 else "queries"
-    return f"trace {turn.trace_id} · {n} {label} · {turn.bytes_processed / 1e6:.0f} MB"
+    n = turn.executed
+    if n:
+        label = "query" if n == 1 else "queries"
+        text = f"trace {turn.trace_id} · {n} {label} · {turn.bytes_processed / 1e6:.0f} MB"
+    else:
+        text = f"trace {turn.trace_id} · no queries"
+    if turn.rejected:
+        text += f" · {turn.rejected} rejected"
+    return text
 
 
 def default_session_service(services: Services) -> BaseSessionService:
@@ -62,10 +70,16 @@ def default_session_service(services: Services) -> BaseSessionService:
 
 class ChatSession:
     def __init__(
-        self, runner: Runner, sessions: BaseSessionService, user_id: str, session_id: str
+        self,
+        runner: Runner,
+        sessions: BaseSessionService,
+        user_id: str,
+        session_id: str,
+        tracer: TraceWriter,
     ) -> None:
         self._runner = runner
         self._sessions = sessions
+        self.tracer = tracer
         self.user_id = user_id
         self.session_id = session_id
         self.resumed = False
@@ -80,22 +94,27 @@ class ChatSession:
         model: str | BaseLlm | None = None,
         session_service: BaseSessionService | None = None,
         resume: bool = True,
+        tracer: TraceWriter | None = None,
     ) -> ChatSession:
         services.user(user_id)  # fail early for an unknown identity
         sessions = session_service or default_session_service(services)
-        runner = Runner(
-            app_name=APP_NAME, agent=build_agent(services, model=model), session_service=sessions
+        tracer = tracer or TraceWriter(services.settings.log_dir / "traces.jsonl")
+        app = App(
+            name=APP_NAME,
+            root_agent=build_agent(services, model=model),
+            plugins=[TracePlugin(tracer)],
         )
+        runner = Runner(app=app, session_service=sessions)
         existing = []
         if resume:
             listed = await sessions.list_sessions(app_name=APP_NAME, user_id=user_id)
             existing = sorted(listed.sessions, key=lambda s: s.last_update_time)
         if existing:
-            chat = cls(runner, sessions, user_id, existing[-1].id)
+            chat = cls(runner, sessions, user_id, existing[-1].id, tracer)
             chat.resumed = True
             return chat
         created = await sessions.create_session(app_name=APP_NAME, user_id=user_id)
-        return cls(runner, sessions, user_id, created.id)
+        return cls(runner, sessions, user_id, created.id, tracer)
 
     async def new_conversation(self) -> None:
         created = await self._sessions.create_session(app_name=APP_NAME, user_id=self.user_id)
@@ -135,8 +154,19 @@ class ChatSession:
                 if event.content and event.is_final_response():
                     answer.extend(p.text for p in event.content.parts or [] if p.text)
         except Exception as e:
-            turn.trace_id = turn.trace_id or f"t-{uuid.uuid4().hex[:12]}"
+            turn.trace_id = (
+                turn.trace_id
+                or self.tracer.active.get(self.session_id)
+                or f"t-{uuid.uuid4().hex[:12]}"
+            )
             log.exception("turn failed trace_id=%s", turn.trace_id)
+            write_failed_turn(
+                self.tracer,
+                trace_id=turn.trace_id,
+                session_id=self.session_id,
+                user_id=self.user_id,
+                error=e,
+            )
             turn.error = f"{_friendly(e)} (trace {turn.trace_id})"
         turn.answer = "\n".join(answer).strip()
         self.last_turn = turn
@@ -159,7 +189,13 @@ def _collect(event, turn: Turn) -> None:
             )
     for response in event.get_function_responses():
         if response.name == "run_query":
-            turn.bytes_processed += int((response.response or {}).get("bytes_processed", 0))
+            result = response.response or {}
+            status = result.get("status")
+            if status in ("ok", "error"):
+                turn.executed += 1
+            elif status == "rejected":
+                turn.rejected += 1
+            turn.bytes_processed += int(result.get("bytes_processed", 0))
 
 
 def _friendly(error: Exception) -> str:

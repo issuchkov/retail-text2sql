@@ -129,3 +129,17 @@ async def test_new_conversation_switches_session(services) -> None:
 )
 def test_parse_command(line: str, expected) -> None:
     assert parse_command(line) == expected
+
+
+async def test_footer_counts_executed_and_rejected_queries(services) -> None:
+    chat = await open_chat(
+        services,
+        [
+            call("run_query", sql="SELECT email FROM users"),
+            call("run_query", sql="SELECT brand FROM products"),
+            text("ok"),
+        ],
+    )
+    turn = await chat.ask("q")
+    assert len(turn.queries) == 2  # /sql still shows both
+    assert footer(turn) == f"trace {turn.trace_id} · 1 query · 1 MB · 1 rejected"

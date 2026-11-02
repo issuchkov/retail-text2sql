@@ -129,6 +129,12 @@ class ResilientLlm(BaseLlm):
                         continue
                     breaker.success()
                     self._record(model, "ok")
+                    for response in responses:  # read by the tracing plugin
+                        response.custom_metadata = {
+                            **(response.custom_metadata or {}),
+                            "model": model.model,
+                            "attempts": self.last_attempts,
+                        }
                     return responses
             if round_ == 0 and rate_delays and min(rate_delays) <= policy.max_wait_s:
                 await policy.sleep(min(rate_delays))
