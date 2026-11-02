@@ -31,10 +31,10 @@ class ScriptedLlm(BaseLlm):
     """Returns the scripted responses in order and records every request."""
 
     model: str = "scripted"
-    _script: list[LlmResponse] = PrivateAttr(default_factory=list)
+    _script: list[LlmResponse | Exception] = PrivateAttr(default_factory=list)
     _requests: list[LlmRequest] = PrivateAttr(default_factory=list)
 
-    def __init__(self, script: list[LlmResponse]) -> None:
+    def __init__(self, script: list[LlmResponse | Exception]) -> None:
         super().__init__()
         self._script = list(script)
 
@@ -46,7 +46,10 @@ class ScriptedLlm(BaseLlm):
         self, llm_request: LlmRequest, stream: bool = False
     ) -> AsyncGenerator[LlmResponse, None]:
         self._requests.append(llm_request)
-        yield self._script.pop(0) if self._script else text("(script exhausted)")
+        step = self._script.pop(0) if self._script else text("(script exhausted)")
+        if isinstance(step, Exception):
+            raise step
+        yield step
 
     def function_responses(self) -> list[dict[str, Any]]:
         """All function responses the model has been sent, in order."""

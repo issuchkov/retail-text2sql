@@ -20,7 +20,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 3 Report store and confirmation | done (tool wiring in stage 4) |
 | 3b Client answers rework (SPEC v2) | done |
 | 4 Agent assembly | done |
-| 5 CLI | todo |
+| 5 CLI | done (`/trace`, `/stats` in stage 7) |
 | 6 Resilience | todo |
 | 7 Observability | todo |
 | 8 Golden bucket + saved definitions | todo |
@@ -166,6 +166,14 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
 - Sessions in SQLite (`DatabaseSessionService`) → resume after restart.
 - Every turn wrapped: errors → short message with `trace_id`, loop continues.
 - Tests: confirmation parsing (exact `delete N` only), error wrapping.
+- Done 2026-11-03: `cli/chat.py` (turns, confirmation, error wrapping, resume) and
+  `cli/app.py` (rich terminal, `/sql`, `/reports`, `/new`, `/help`, `/quit`); sessions in
+  `data/sessions.sqlite` via `google-adk[db]`; 15 new tests (179 total). Live as Bob: Q3
+  2026 net revenue by brand (Diesel $20,508.87 first) with definitions stated → `/sql` →
+  report saved → `/reports` → delete: model asked to confirm without claiming deletion, CLI
+  listed the exact report, `delete 1` deleted it → `/reports` empty. Restart without
+  `--new` resumed the conversation (the agent recalled the first question). Unknown user →
+  list of configured users. No errors in `logs/cli.log`.
 
 ### 6 Resilience (1 h) — SPEC §6, AC-6, AC-7
 - Model calls: retry with backoff and jitter on 429/5xx/timeout, then fallback model;
