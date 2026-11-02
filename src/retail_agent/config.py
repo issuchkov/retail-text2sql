@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     max_bytes_billed: int = Field(1_000_000_000, alias="RETAIL_MAX_BYTES_BILLED")
     max_result_rows: int = Field(1_000, alias="RETAIL_MAX_RESULT_ROWS")
     query_timeout_s: float = Field(60.0, alias="RETAIL_QUERY_TIMEOUT_S")
+
+    # Per-turn budgets and model resilience (SPEC §6).
+    max_model_calls_per_turn: int = Field(12, alias="RETAIL_MAX_MODEL_CALLS")
+    max_queries_per_turn: int = Field(8, alias="RETAIL_MAX_QUERIES")
+    max_failed_queries: int = Field(3, alias="RETAIL_MAX_FAILED_QUERIES")
+    model_timeout_s: float = Field(25.0, alias="RETAIL_MODEL_TIMEOUT_S")
+    model_max_wait_s: float = Field(30.0, alias="RETAIL_MODEL_MAX_WAIT_S")
     pseudonym_salt: str | None = Field(None, alias="RETAIL_PSEUDONYM_SALT")
 
     users_file: Path = Field(PROJECT_ROOT / "config" / "users.yaml", alias="RETAIL_USERS_FILE")

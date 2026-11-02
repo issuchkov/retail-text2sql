@@ -207,8 +207,11 @@ security, backups under a retention policy (HLD).
   most 3 correction attempts per question, then the agent explains what it tried.
 - **Cost bounds per turn:** max model calls (default 12), max queries (default 8), byte
   cap per query; when a budget is reached the agent answers with what it has.
-- **Model failures (Gemini 429/5xx/timeouts):** bounded retries with backoff and jitter,
-  then a fallback model; a circuit breaker stops calling a provider that keeps failing.
+- **Model failures:** a 429 switches to the fallback model at once (separate quota); when
+  both are rate-limited, one wait for the advertised `RetryInfo` delay if it is at most 30 s;
+  a timeout (default 25 s) or a 404 (retired model) switches to the fallback; 5xx and
+  network errors are retried once with backoff and jitter; a circuit breaker per model
+  skips a model after 3 consecutive failures for 60 s; other 4xx errors are not retried.
 - **BigQuery failures:** transient errors retried; outage → clear message, the
   conversation continues.
 - **CLI never crashes:** every turn is wrapped; errors become a short user message with the

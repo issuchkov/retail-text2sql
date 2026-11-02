@@ -21,7 +21,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 3b Client answers rework (SPEC v2) | done |
 | 4 Agent assembly | done |
 | 5 CLI | done (`/trace`, `/stats` in stage 7) |
-| 6 Resilience | todo |
+| 6 Resilience | done |
 | 7 Observability | todo |
 | 8 Golden bucket + saved definitions | todo |
 | 9 Evals | todo |
@@ -182,6 +182,14 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
   per question, enforced in code (tool returns "budget exhausted").
 - Fault-injection tests: fake model raising 429 then succeeding; permanent failure →
   fallback → clear message; BigQuery transient vs permanent errors; budget exhaustion.
+- Done 2026-11-03: `agent/resilience.py` (`ResilientLlm`: primary + fallback, 429 → next
+  model, both limited → one `RetryInfo` wait ≤ 30 s, timeout/404 → next model, 5xx retried
+  once, circuit breaker 3 failures / 60 s, bad requests raised) and `agent/budget.py`
+  (model calls, queries and failed attempts per invocation). 16 new tests (195 total); the
+  429 test payload copies the real free-tier response. Live fault injection through
+  `ChatSession`: normal turn on 3.5-flash-lite; `RETAIL_MODEL=gemini-retired-test` → 404 →
+  3.1-flash-lite answered the same number (276 October orders); 0.01 s timeout → both
+  models timed out → friendly message with the trace id, no crash.
 
 ### 7 Observability (0.5 h) — SPEC §7, AC-8
 - ADK `BasePlugin` writing JSON-lines spans to `logs/traces.jsonl`: turn, model call
@@ -279,3 +287,6 @@ resilience, tracing, golden trio format + sample set.
   the free tier, not the network. `gemini-2.5-flash-lite` (the old default) returns 404 for
   new users. Provisional fallback `gemini-3.1-flash-lite`; stage 1 confirms with the
   tool-calling and SQL probe.
+- 2026-11-03: A 404 from the model API switches to the fallback instead of failing the
+  turn: `gemini-2.5-flash-lite` was retired for new users during this project, so a
+  retired model is a realistic outage, not a programming error.

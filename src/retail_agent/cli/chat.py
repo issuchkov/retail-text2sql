@@ -19,6 +19,7 @@ from google.genai import errors as genai_errors
 from google.genai import types
 
 from retail_agent.agent.agent import APP_NAME, build_agent
+from retail_agent.agent.resilience import ModelUnavailable
 from retail_agent.agent.services import Services
 
 log = logging.getLogger("retail_agent.cli")
@@ -164,6 +165,6 @@ def _collect(event, turn: Turn) -> None:
 def _friendly(error: Exception) -> str:
     if isinstance(error, genai_errors.ClientError) and getattr(error, "code", None) == 429:
         return "The model is rate-limited right now. Wait a minute and try again."
-    if isinstance(error, genai_errors.ServerError):
+    if isinstance(error, (genai_errors.ServerError, ModelUnavailable)):
         return "The model service is unavailable right now. Try again shortly."
     return "Something went wrong while answering. Please try again."

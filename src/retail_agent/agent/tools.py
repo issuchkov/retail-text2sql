@@ -16,6 +16,7 @@ from typing import Any
 from google.adk.tools import FunctionTool, ToolContext
 from pydantic import ValidationError
 
+from retail_agent.agent import budget
 from retail_agent.agent.redaction import redact, redact_value
 from retail_agent.agent.services import Services
 from retail_agent.config import UserProfile
@@ -40,7 +41,30 @@ def build_tools(services: Services) -> list[FunctionTool]:
     def current_user(tool_context: ToolContext) -> UserProfile:
         return services.user(tool_context.session.user_id)
 
-    def execute(sql: str, user: UserProfile) -> dict[str, Any]:
+    def execute(sql: str, user: UserProfile, tool_context: ToolContext) -> dict[str, Any]:
+        settings = services.settings
+        spent = budget.counters(tool_context.state, tool_context.invocation_id)
+        if spent["failed"] >= settings.max_failed_queries:
+            return {
+                "status": "budget_exhausted",
+                "message": (
+                    f"{spent['failed']} query attempts failed in this turn. Stop querying and "
+                    "tell the user what you tried and what went wrong."
+                ),
+            }
+        if spent["queries"] >= settings.max_queries_per_turn:
+            return {
+                "status": "budget_exhausted",
+                "message": (
+                    f"The limit of {settings.max_queries_per_turn} queries per question is "
+                    "reached. Answer with the results you already have."
+                ),
+            }
+        response = _execute(sql, user, spent)
+        budget.save(tool_context.state, spent)
+        return response
+
+    def _execute(sql: str, user: UserProfile, spent: dict[str, Any]) -> dict[str, Any]:
         settings = services.settings
         try:
             prepared = bind(
@@ -50,10 +74,13 @@ def build_tools(services: Services) -> list[FunctionTool]:
                 salt=settings.pseudonym_salt or "",
             )
         except QueryRejected as e:
+            spent["failed"] += 1
             return {"status": "rejected", "rule": e.rule, "message": e.message}
+        spent["queries"] += 1
         try:
             result = services.executor.run(prepared, max_rows=settings.max_result_rows)
         except QueryFailed as e:
+            spent["failed"] += 1
             return {
                 "status": "error",
                 "kind": e.kind,
@@ -89,7 +116,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
             status "ok" with columns and rows; "rejected" with the guard rule and how to fix
             the query; or "error" with the BigQuery error and whether rewriting can fix it.
         """
-        return execute(sql, current_user(tool_context))
+        return execute(sql, current_user(tool_context), tool_context)
 
     def list_column_values(
         table: str, column: str, tool_context: ToolContext, limit: int = 50
@@ -112,7 +139,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
             f"SELECT {column} AS value, COUNT(*) AS n FROM {table} "
             f"GROUP BY value ORDER BY n DESC LIMIT {top}"
         )
-        return execute(sql, current_user(tool_context))
+        return execute(sql, current_user(tool_context), tool_context)
 
     def describe_data(tool_context: ToolContext) -> dict[str, Any]:
         """Describe the available tables and columns, the user's brand scope and the date
@@ -124,6 +151,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
                 "SELECT MIN(created_at) AS first_order, MAX(created_at) AS last_order, "
                 "COUNT(*) AS orders FROM orders",
                 user,
+                tool_context,
             )
             coverage = result["rows"][0] if result.get("rows") else {}
             if coverage:

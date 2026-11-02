@@ -52,14 +52,15 @@ class ScriptedLlm(BaseLlm):
         yield step
 
     def function_responses(self) -> list[dict[str, Any]]:
-        """All function responses the model has been sent, in order."""
-        seen: list[dict[str, Any]] = []
-        for request in self._requests:
-            for content in request.contents:
-                for part in content.parts or []:
-                    if part.function_response and part.function_response.response not in seen:
-                        seen.append(part.function_response.response)
-        return seen
+        """Function responses in the history of the last request, in order."""
+        if not self._requests:
+            return []
+        return [
+            part.function_response.response
+            for content in self._requests[-1].contents
+            for part in content.parts or []
+            if part.function_response
+        ]
 
 
 class FakeExecutor:
