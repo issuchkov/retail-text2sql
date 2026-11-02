@@ -1,0 +1,49 @@
+[project]
+name = "retail-agent"
+version = "0.1.0"
+description = "Chat agent for retail data analysis over BigQuery thelook_ecommerce, with PII masking, entitlement scoping and guarded SQL."
+readme = "README.md"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+    "google-adk>=2.13,<3",
+    "google-cloud-bigquery>=3.46,<4",
+    "db-dtypes>=1.3",
+    "sqlglot>=30.25,<31",
+    "pydantic>=2.10",
+    "pydantic-settings>=2.7",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "rich>=13.9",
+]
+
+[project.scripts]
+retail-agent = "retail_agent.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/retail_agent"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = ["live: needs BigQuery credentials and network (deselected by default)"]
+addopts = "-m 'not live'"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests", "evals"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]

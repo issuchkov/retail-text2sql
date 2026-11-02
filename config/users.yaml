@@ -1,0 +1,22 @@
+# Executive identities for the prototype (SPEC §2). The CLI selects one with --user.
+# Production: identities come from SSO; entitlements from an admin-managed store.
+# scope: `all: true`, or any of departments / categories / brands
+# (dimensions combine with AND, values within a dimension with OR).
+users:
+  - id: alice
+    name: Alice Moreno
+    title: VP Womenswear
+    scope:
+      departments: [Women]
+
+  - id: bob
+    name: Bob Chen
+    title: Head of Outerwear and Denim
+    scope:
+      categories: [Outerwear & Coats, Jeans]
+
+  - id: carol
+    name: Carol Diaz
+    title: Chief Operating Officer
+    scope:
+      all: true
