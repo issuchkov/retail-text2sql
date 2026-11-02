@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from retail_agent.config import Settings, UserProfile
+from retail_agent.agent.definitions import DefinitionStore
+from retail_agent.config import PROJECT_ROOT, Settings, UserProfile
+from retail_agent.golden.library import GoldenLibrary
 from retail_agent.query.executor import QueryResult
 from retail_agent.query.guard import PreparedQuery
 from retail_agent.reports.store import ReportStore
@@ -27,6 +29,8 @@ class Services:
     executor: QueryRunner
     store: ReportStore
     users: dict[str, UserProfile]
+    definitions: DefinitionStore = field(default_factory=lambda: DefinitionStore(":memory:"))
+    golden: GoldenLibrary | None = None
     coverage_cache: dict[str, dict] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -44,11 +48,17 @@ class Services:
 def build_services(settings: Settings) -> Services:
     """Real dependencies: BigQuery, the SQLite report store and configured identities."""
     from retail_agent.config import load_users
+    from retail_agent.golden.library import GeminiEmbedder
     from retail_agent.query.executor import make_executor
 
+    golden_dir = PROJECT_ROOT / "golden"
     return Services(
         settings=settings,
         executor=make_executor(settings),
         store=ReportStore(settings.data_dir / "reports.sqlite"),
         users=load_users(settings.users_file),
+        definitions=DefinitionStore(settings.data_dir / "preferences.sqlite"),
+        golden=GoldenLibrary.load(
+            golden_dir / "trios", golden_dir / "index.json", embedder=GeminiEmbedder()
+        ),
     )

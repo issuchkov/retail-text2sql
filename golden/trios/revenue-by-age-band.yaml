@@ -1,0 +1,27 @@
+id: revenue-by-age-band
+question: How does revenue split across customer age groups?
+intent: Net revenue and customers per age band, aggregated.
+sql: |
+  SELECT CASE WHEN u.age < 25 THEN '18-24' WHEN u.age < 35 THEN '25-34'
+              WHEN u.age < 45 THEN '35-44' WHEN u.age < 55 THEN '45-54' ELSE '55+' END AS age_band,
+    COUNT(DISTINCT u.customer_key) AS customers,
+    ROUND(SUM(o.order_revenue), 2) AS net_revenue
+  FROM orders AS o
+  JOIN users AS u USING (customer_key)
+  GROUP BY age_band
+  ORDER BY age_band
+report: |
+  Shows revenue and revenue per customer by band, so the reader sees both reach and value,
+  without describing individual customers.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- age
+- demographics
+- revenue
+- segment
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

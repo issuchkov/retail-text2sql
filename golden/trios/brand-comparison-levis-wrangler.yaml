@@ -1,0 +1,33 @@
+id: brand-comparison-levis-wrangler
+question: Why does Levi's perform differently from Wrangler?
+intent: Compare two brands on net revenue, volume, average sale price and return rate.
+sql: |
+  SELECT p.brand,
+    COUNTIF(oi.status != 'Cancelled') AS items,
+    ROUND(SUM(IF(oi.status NOT IN ('Cancelled', 'Returned'), oi.sale_price, 0)), 2) AS net_revenue,
+    ROUND(AVG(IF(oi.status NOT IN ('Cancelled', 'Returned'), oi.sale_price, NULL)), 2) AS avg_sale_price,
+    ROUND(SAFE_DIVIDE(COUNTIF(oi.status = 'Returned'), COUNTIF(oi.status != 'Cancelled')) * 100, 1)
+      AS return_rate_pct
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE p.brand IN ("Levi's", 'Wrangler')
+  GROUP BY p.brand
+report: |
+  Splits the revenue gap into price and volume, then checks whether returns explain part
+  of it, and ends with one question to investigate next.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+- term: return rate
+  definition: returned items divided by items that were not cancelled
+tags:
+- brand
+- comparison
+- price
+- returns
+brands:
+- Levi's
+- Wrangler
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

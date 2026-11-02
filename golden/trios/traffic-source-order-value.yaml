@@ -1,0 +1,25 @@
+id: traffic-source-order-value
+question: Which traffic source brings the most valuable orders?
+intent: Average net order value and order count by the customer's acquisition channel.
+sql: |
+  SELECT u.traffic_source, COUNT(DISTINCT o.order_id) AS orders,
+    ROUND(AVG(o.order_revenue), 2) AS avg_order_value
+  FROM orders AS o
+  JOIN users AS u USING (customer_key)
+  WHERE o.order_revenue > 0
+  GROUP BY u.traffic_source
+  ORDER BY avg_order_value DESC
+report: |
+  Ranks channels by average order value and checks that the leading channel also has
+  enough orders for the difference to matter.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- traffic source
+- marketing
+- order value
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

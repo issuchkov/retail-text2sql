@@ -1,0 +1,19 @@
+id: data-coverage
+question: What data do we have and what period does it cover?
+intent: 'Coverage of the order history in the user''s scope: first and last order, volume.'
+sql: |
+  SELECT MIN(created_at) AS first_order, MAX(created_at) AS last_order,
+    COUNT(*) AS orders, COUNT(DISTINCT customer_key) AS customers
+  FROM orders
+report: |
+  States the date range first, then the order and customer volume, and reminds the reader
+  that the data is limited to their brand scope.
+definitions: []
+tags:
+- coverage
+- orders
+- customers
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

@@ -237,14 +237,19 @@ security, backups under a retention policy (HLD).
 
 - **R1 Golden bucket.**
   - Format (prototype, `golden/trios/*.yaml`): `id`, `question`, `intent` (one line),
-    `sql` (logical table names), `report` (summary of findings, the way an analyst wrote
-    it), `definitions` (terms and the definitions used), `tags` (metrics, dimensions,
-    entities), `author`, `reviewed_at`.
+    `sql` (logical table names), `report` (how an analyst summarised the result: structure
+    and kind of insight, **no figures**), `definitions` (terms and the definitions used),
+    `tags` (metrics, dimensions), `brands` (brands the trio is about; empty = generic),
+    `author`, `status` (`seed` | `reviewed`), `reviewed_at`.
+  - Scope: a trio is returned only to users whose scope covers all its `brands`, and
+    reports carry no figures, so examples never leak out-of-scope numbers.
   - Sample set: about 20 trios covering the SPEC §3.1 question types; every `sql` passes
-    the guard and runs on BigQuery.
-  - Retrieval (prototype, lite): question embeddings precomputed into a local index; at
-    query time the top 3 similar trios are returned by a tool as examples of
-    interpretation, SQL and report style — examples, not answers.
+    the guard and runs on BigQuery. The prototype's trios are `seed` (written for the
+    demo, not yet reviewed by an analyst).
+  - Retrieval (prototype, lite): embeddings of question, intent and tags precomputed into
+    `golden/index.json`; at query time `find_similar_analyses` embeds the question and
+    returns the top 3 in-scope trios as examples of interpretation, SQL and report style —
+    examples, not answers. If embedding fails, a local lexical (TF-IDF) ranking is used.
   - Design: storage in GCS (one file per trio, versioned), indexed into a vector store with
     metadata filters (tags, brands); hybrid retrieval (vector + keyword); update loop:
     saved reports and positive feedback → candidate trios → analyst review → index;

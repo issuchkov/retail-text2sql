@@ -1,0 +1,30 @@
+id: customer-value-bands
+question: How is customer lifetime value distributed?
+intent: Customers and revenue per lifetime net revenue band.
+sql: |
+  WITH spend AS (
+    SELECT customer_key, SUM(order_revenue) AS lifetime_revenue
+    FROM orders
+    GROUP BY customer_key
+  )
+  SELECT CASE WHEN lifetime_revenue < 50 THEN 'under 50' WHEN lifetime_revenue < 100 THEN '50-99'
+              WHEN lifetime_revenue < 250 THEN '100-249' WHEN lifetime_revenue < 500 THEN '250-499'
+              ELSE '500+' END AS value_band,
+    COUNT(*) AS customers, ROUND(SUM(lifetime_revenue), 2) AS net_revenue
+  FROM spend
+  GROUP BY value_band
+  ORDER BY MIN(lifetime_revenue)
+report: |
+  Highlights how a small group of high-value customers carries a large share of revenue
+  and what that means for retention priorities.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- customers
+- lifetime value
+- segment
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

@@ -356,4 +356,7 @@ def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
         summary["deleted"] = len(result["deleted_ids"])
     if "redacted" in result:
         summary["redacted"] = result["redacted"]
+    if "examples" in result:  # find_similar_analyses
+        summary["method"] = result.get("method")
+        summary["examples"] = [e.get("id") for e in result["examples"]]
     return summary

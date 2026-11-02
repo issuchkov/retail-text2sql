@@ -1,0 +1,26 @@
+id: brand-category-mix
+question: What drives the difference between my brands?
+intent: Net revenue, volume and average price per brand and category, to compare category mix.
+sql: |
+  SELECT p.brand, p.category, ROUND(SUM(oi.sale_price), 2) AS net_revenue, COUNT(*) AS items,
+    ROUND(AVG(oi.sale_price), 2) AS avg_price
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY p.brand, p.category
+  ORDER BY p.brand, net_revenue DESC
+report: |
+  Explains brand differences through category mix and price level rather than totals
+  alone, naming the categories where the brands diverge most.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- brand
+- category
+- mix
+- comparison
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

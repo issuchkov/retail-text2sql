@@ -1,0 +1,32 @@
+id: new-vs-returning-customers
+question: How many new versus returning customers do we get each month?
+intent: Per month, customers ordering for the first time versus customers who ordered before.
+sql: |
+  WITH first_order AS (
+    SELECT customer_key, MIN(DATE_TRUNC(DATE(created_at), MONTH)) AS first_month
+    FROM orders
+    GROUP BY customer_key
+  ),
+  monthly AS (
+    SELECT DISTINCT customer_key, DATE_TRUNC(DATE(created_at), MONTH) AS month
+    FROM orders
+  )
+  SELECT m.month, COUNTIF(m.month = f.first_month) AS new_customers,
+    COUNTIF(m.month > f.first_month) AS returning_customers
+  FROM monthly AS m
+  JOIN first_order AS f USING (customer_key)
+  WHERE m.month >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH)
+  GROUP BY m.month
+  ORDER BY m.month
+report: |
+  Shows whether growth comes from acquisition or retention and how the mix is moving.
+definitions: []
+tags:
+- customers
+- acquisition
+- retention
+- month
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

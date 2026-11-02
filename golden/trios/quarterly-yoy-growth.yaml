@@ -1,0 +1,32 @@
+id: quarterly-yoy-growth
+question: Is revenue growing year over year by quarter?
+intent: Net revenue per calendar quarter with growth against the same quarter a year earlier.
+sql: |
+  WITH q AS (
+    SELECT DATE_TRUNC(DATE(created_at), QUARTER) AS quarter, SUM(order_revenue) AS net_revenue
+    FROM orders
+    GROUP BY quarter
+  )
+  SELECT quarter, ROUND(net_revenue, 2) AS net_revenue,
+    ROUND(SAFE_DIVIDE(net_revenue - LAG(net_revenue, 4) OVER (ORDER BY quarter),
+                      LAG(net_revenue, 4) OVER (ORDER BY quarter)) * 100, 1) AS yoy_growth_pct
+  FROM q
+  ORDER BY quarter DESC
+  LIMIT 8
+report: |
+  Reports growth for the latest complete quarter first, notes that the current quarter is
+  partial, and flags any quarter where growth turned negative.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+- term: quarter
+  definition: calendar quarter in UTC
+tags:
+- revenue
+- growth
+- year over year
+- quarter
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

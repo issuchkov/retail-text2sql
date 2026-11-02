@@ -1,0 +1,25 @@
+id: top-customers
+question: Who are our top customers this year?
+intent: Top 10 customers by net revenue since 1 January, identified only by customer_key.
+sql: |
+  SELECT customer_key, COUNT(DISTINCT order_id) AS orders, ROUND(SUM(order_revenue), 2) AS net_revenue
+  FROM orders
+  WHERE DATE(created_at) >= DATE_TRUNC(CURRENT_DATE(), YEAR)
+  GROUP BY customer_key
+  ORDER BY net_revenue DESC
+  LIMIT 10
+report: |
+  Shows the ranking by pseudonymous customer key, notes how concentrated revenue is in the
+  top customers, and never tries to describe who the customers are.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- customers
+- ranking
+- revenue
+- customer level
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

@@ -1,0 +1,30 @@
+id: top-categories-last-quarter
+question: What were our top product categories by revenue last quarter?
+intent: Rank categories by net revenue in the last full calendar quarter.
+sql: |
+  SELECT p.category, ROUND(SUM(oi.sale_price), 2) AS net_revenue, COUNT(*) AS items
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), QUARTER), INTERVAL 1 QUARTER)
+    AND DATE(oi.created_at) < DATE_TRUNC(CURRENT_DATE(), QUARTER)
+  GROUP BY p.category
+  ORDER BY net_revenue DESC
+  LIMIT 10
+report: |
+  Leads with the top category and its share of the quarter, lists the top five in a table,
+  and points out categories with high volume but low revenue per item.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+- term: quarter
+  definition: calendar quarter in UTC
+tags:
+- revenue
+- category
+- quarter
+- ranking
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

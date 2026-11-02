@@ -1,0 +1,28 @@
+id: monthly-revenue-trend
+question: How has monthly revenue developed over the last year?
+intent: Net revenue and orders per calendar month for the last 12 full months.
+sql: |
+  SELECT DATE_TRUNC(DATE(oi.created_at), MONTH) AS month,
+    ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+    COUNT(DISTINCT oi.order_id) AS orders
+  FROM order_items AS oi
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH)
+    AND DATE(oi.created_at) < DATE_TRUNC(CURRENT_DATE(), MONTH)
+  GROUP BY month
+  ORDER BY month
+report: |
+  Describes the overall direction, the strongest and weakest months, and whether growth
+  comes from more orders or bigger orders.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- revenue
+- trend
+- month
+- time series
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

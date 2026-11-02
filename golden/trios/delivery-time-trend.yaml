@@ -1,0 +1,26 @@
+id: delivery-time-trend
+question: Are we getting slower at shipping and delivering orders?
+intent: Average days to ship and days in transit per month for delivered orders.
+sql: |
+  SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month,
+    ROUND(AVG(TIMESTAMP_DIFF(shipped_at, created_at, HOUR)) / 24, 1) AS days_to_ship,
+    ROUND(AVG(TIMESTAMP_DIFF(delivered_at, shipped_at, HOUR)) / 24, 1) AS days_in_transit,
+    COUNT(*) AS delivered_orders
+  FROM orders
+  WHERE delivered_at IS NOT NULL
+    AND DATE(created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 12 MONTH)
+  GROUP BY month
+  ORDER BY month
+report: |
+  Separates warehouse time from carrier time so the reader knows which side to fix.
+definitions: []
+tags:
+- fulfillment
+- shipping
+- delivery
+- operations
+- trend
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

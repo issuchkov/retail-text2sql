@@ -116,6 +116,12 @@ class ChatSession:
         created = await sessions.create_session(app_name=APP_NAME, user_id=user_id)
         return cls(runner, sessions, user_id, created.id, tracer)
 
+    async def session_state(self) -> dict:
+        session = await self._sessions.get_session(
+            app_name=APP_NAME, user_id=self.user_id, session_id=self.session_id
+        )
+        return dict(session.state) if session else {}
+
     async def new_conversation(self) -> None:
         created = await self._sessions.create_session(app_name=APP_NAME, user_id=self.user_id)
         self.session_id = created.id

@@ -23,7 +23,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 5 CLI | done (`/trace`, `/stats` in stage 7) |
 | 6 Resilience | done |
 | 7 Observability | done |
-| 8 Golden bucket + saved definitions | todo |
+| 8 Golden bucket + saved definitions | done |
 | 9 Evals | todo |
 | 10 Docs (HLD, technical explanation, README) | todo |
 | 11 Fresh-clone check | todo |
@@ -220,6 +220,17 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
 - `set_definition(term, definition, remember)`: conversation override in session state;
   `remember=true` only on an explicit request → per-user store in SQLite, injected into the
   instruction; `/definitions` in the CLI shows the active ones and their source.
+- Done 2026-11-03: 23 seed trios (`golden/trios/*.yaml`, format SPEC §8 with `brands` and
+  no figures in reports), `golden/library.py` (scope filter, embedding search over
+  `golden/index.json` with `gemini-embedding-001` 256 dims, TF-IDF fallback when the index
+  is stale or embedding fails), `scripts/build_golden_index.py`; `agent/definitions.py`
+  (default → saved → this conversation) with `set_definition` / `reset_definition` and
+  `/definitions`. 88 new offline tests (292 total) incl. every trio through the guard;
+  `tests/live/test_golden_live.py` 28/28: every trio's SQL returns rows on BigQuery (brand
+  trios under their brands' scope), 5/5 paraphrases retrieved by embeddings. Live CLI as
+  Bob: churn question used find_similar_analyses then one query (84.6%, default stated);
+  "use 60 days" → 88.4% (this conversation); "always" → saved, shown after `/new`; reset →
+  default.
 
 ### 9 Evals (1 h) — SPEC §11
 - `evals/scenarios.yaml`: ~15 questions covering SPEC §3.1 types; each has a reference SQL
@@ -301,3 +312,9 @@ resilience, tracing, golden trio format + sample set.
 - 2026-11-03: A 404 from the model API switches to the fallback instead of failing the
   turn: `gemini-2.5-flash-lite` was retired for new users during this project, so a
   retired model is a realistic outage, not a programming error.
+- 2026-11-03: Golden trios get a `brands` field and figure-free reports, so retrieval can
+  be scope-filtered and examples cannot leak another brand's numbers (SPEC §8).
+- 2026-11-03: Embeddings `gemini-embedding-001` (256 dims): `gemini-embedding-2` returned a
+  single vector for a two-text batch, i.e. it treats a batch as one multi-part input.
+- 2026-11-03: Golden retrieval is a tool the model calls for new questions, not automatic
+  context injection: it is visible in traces and costs nothing on follow-ups.

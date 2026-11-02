@@ -1,0 +1,25 @@
+id: department-share
+question: How is revenue split between men's and women's this year?
+intent: Net revenue and share per department for the current calendar year.
+sql: |
+  SELECT p.department, ROUND(SUM(oi.sale_price), 2) AS net_revenue,
+    ROUND(SAFE_DIVIDE(SUM(oi.sale_price), SUM(SUM(oi.sale_price)) OVER ()) * 100, 1) AS share_pct
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND EXTRACT(YEAR FROM oi.created_at) = EXTRACT(YEAR FROM CURRENT_DATE())
+  GROUP BY p.department
+report: |
+  Gives the split as shares and notes that the year is not complete yet.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- department
+- revenue
+- share
+- year
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

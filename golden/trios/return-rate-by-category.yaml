@@ -1,0 +1,27 @@
+id: return-rate-by-category
+question: Which categories have the highest return rates?
+intent: Return rate per category over all time.
+sql: |
+  SELECT p.category, COUNTIF(oi.status != 'Cancelled') AS items,
+    COUNTIF(oi.status = 'Returned') AS returned,
+    ROUND(SAFE_DIVIDE(COUNTIF(oi.status = 'Returned'), COUNTIF(oi.status != 'Cancelled')) * 100, 1)
+      AS return_rate_pct
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  GROUP BY p.category
+  HAVING items >= 50
+  ORDER BY return_rate_pct DESC
+report: |
+  Lists the worst categories with their volumes, ignores categories too small to judge,
+  and suggests checking sizing and product descriptions.
+definitions:
+- term: return rate
+  definition: returned items divided by items that were not cancelled
+tags:
+- returns
+- category
+- quality
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

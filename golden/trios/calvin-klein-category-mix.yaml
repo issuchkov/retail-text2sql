@@ -1,0 +1,26 @@
+id: calvin-klein-category-mix
+question: Where does Calvin Klein make its revenue?
+intent: Net revenue and volume per category and department for Calvin Klein.
+sql: |
+  SELECT p.category, p.department, ROUND(SUM(oi.sale_price), 2) AS net_revenue, COUNT(*) AS items
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE p.brand = 'Calvin Klein'
+    AND oi.status NOT IN ('Cancelled', 'Returned')
+  GROUP BY p.category, p.department
+  ORDER BY net_revenue DESC
+report: |
+  Names the categories that carry the brand and compares the men's and women's lines.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- brand
+- category
+- department
+- mix
+brands:
+- Calvin Klein
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

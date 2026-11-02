@@ -13,12 +13,13 @@ from rich.markdown import Markdown
 from rich.syntax import Syntax
 from rich.table import Table
 
+from retail_agent.agent import definitions
 from retail_agent.agent.services import Services, build_services
 from retail_agent.cli.chat import ChatSession, Turn, footer
 from retail_agent.config import Settings, load_env
 from retail_agent.observability.metrics import summarize
 
-COMMANDS = {"sql", "trace", "stats", "feedback", "reports", "new", "quit", "help"}
+COMMANDS = {"sql", "trace", "stats", "feedback", "definitions", "reports", "new", "quit", "help"}
 HELP = """Ask questions about your brands' sales, products and customers in plain language.
 
 Commands:
@@ -26,6 +27,7 @@ Commands:
   /trace    the steps of the last answer: model calls, queries, timings
   /stats    metrics for this conversation
   /feedback good|bad [note]   rate the last answer
+  /definitions  business definitions in effect and where they come from
   /reports  list your saved reports
   /new      start a new conversation
   /help     this help
@@ -93,6 +95,8 @@ class App:
             self.show_stats()
         elif name == "feedback":
             self.record_feedback(line)
+        elif name == "definitions":
+            await self.show_definitions()
         elif name == "reports":
             self.show_reports()
         elif name == "new":
@@ -218,6 +222,16 @@ class App:
         )
         self.console.print("[dim]Thanks — feedback recorded.[/]")
 
+    async def show_definitions(self) -> None:
+        state = await self.chat.session_state()
+        rows = definitions.effective(state, self.services.definitions, self.chat.user_id)
+        table = Table(title="Business definitions in effect")
+        for column in ("term", "definition", "source"):
+            table.add_column(column)
+        for term, text, source in rows:
+            table.add_row(term, text, source)
+        self.console.print(table)
+
     def show_reports(self) -> None:
         reports = self.services.store.list(self.chat.user_id)
         if not reports:
@@ -244,7 +258,7 @@ def _span_detail(span: dict) -> str:
         )
     if kind == "tool_call":
         bits = [str(span.get("tool")), str(span.get("status"))]
-        for key in ("rule", "error_kind", "row_count"):
+        for key in ("rule", "error_kind", "row_count", "method"):
             if span.get(key) is not None:
                 bits.append(f"{key}={span[key]}")
         if span.get("bytes_processed"):

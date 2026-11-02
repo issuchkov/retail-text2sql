@@ -16,7 +16,7 @@ from typing import Any
 from google.adk.tools import FunctionTool, ToolContext
 from pydantic import ValidationError
 
-from retail_agent.agent import budget
+from retail_agent.agent import budget, definitions
 from retail_agent.agent.redaction import redact, redact_value
 from retail_agent.agent.services import Services
 from retail_agent.config import UserProfile
@@ -289,6 +289,64 @@ def build_tools(services: Services) -> list[FunctionTool]:
             ),
         }
 
+    def find_similar_analyses(question: str, tool_context: ToolContext) -> dict[str, Any]:
+        """Find how analysts approached similar questions before: their interpretation, SQL
+        and report structure. Call this first for a new analysis question (not for simple
+        follow-ups). The examples are patterns to adapt, never answers.
+
+        Args:
+            question: The user's question, restated in one sentence.
+        """
+        user = current_user(tool_context)
+        if services.golden is None:
+            return {"method": "none", "examples": [], "note": "No examples are available."}
+        result = services.golden.search(question, user.scope, k=3)
+        return {
+            "method": result.method,
+            "examples": [trio.as_example(score) for trio, score in result.hits],
+            "note": (
+                "Examples of how analysts approached similar questions — patterns, not answers. "
+                "Adapt the SQL to this question and run your own queries for every number."
+            ),
+        }
+
+    def set_definition(
+        term: str, definition: str, tool_context: ToolContext, remember: bool = False
+    ) -> dict[str, Any]:
+        """Change how a business term (churn, revenue, active customer, ...) is defined.
+
+        Args:
+            term: The term, e.g. "churn".
+            definition: The new definition in one sentence.
+            remember: True only if the user explicitly asks to remember it or to always use
+                it; otherwise it applies to this conversation only.
+        """
+        user = current_user(tool_context)
+        key = definitions.normalize_term(term)
+        text, _ = redact(definition.strip())
+        session = dict(tool_context.state.get(definitions.SESSION_KEY) or {})
+        session[key] = text
+        tool_context.state[definitions.SESSION_KEY] = session
+        if remember:
+            services.definitions.set(user.id, key, text)
+        scope = definitions.SOURCE_SAVED if remember else definitions.SOURCE_CONVERSATION
+        return {"status": "set", "term": key, "scope": scope}
+
+    def reset_definition(term: str, tool_context: ToolContext) -> dict[str, Any]:
+        """Go back to the default definition of a term, here and in later conversations.
+
+        Args:
+            term: The term, e.g. "churn".
+        """
+        user = current_user(tool_context)
+        key = definitions.normalize_term(term)
+        session = dict(tool_context.state.get(definitions.SESSION_KEY) or {})
+        session.pop(key, None)
+        tool_context.state[definitions.SESSION_KEY] = session
+        services.definitions.delete(user.id, key)
+        default = definitions.DEFAULTS.get(key)
+        return {"status": "reset", "term": key, "definition": default or "no default"}
+
     return [
         FunctionTool(run_query),
         FunctionTool(list_column_values),
@@ -296,6 +354,9 @@ def build_tools(services: Services) -> list[FunctionTool]:
         FunctionTool(save_report),
         FunctionTool(list_reports),
         FunctionTool(delete_reports),
+        FunctionTool(find_similar_analyses),
+        FunctionTool(set_definition),
+        FunctionTool(reset_definition),
     ]
 
 

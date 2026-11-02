@@ -1,0 +1,36 @@
+id: quarter-report-with-actions
+question: Create a report for Q1 with insights and action items for Q2.
+intent: 'Q1 of the current year against Q4 of the previous year: orders, customers, net revenue, average
+  order value, return rate; then findings and actions.'
+sql: |
+  SELECT DATE_TRUNC(DATE(created_at), QUARTER) AS quarter,
+    COUNT(DISTINCT order_id) AS orders,
+    COUNT(DISTINCT customer_key) AS customers,
+    ROUND(SUM(order_revenue), 2) AS net_revenue,
+    ROUND(SAFE_DIVIDE(SUM(order_revenue), COUNT(DISTINCT order_id)), 2) AS avg_order_value,
+    ROUND(SAFE_DIVIDE(COUNTIF(status = 'Returned'), COUNT(*)) * 100, 1) AS return_rate_pct
+  FROM orders
+  WHERE DATE(created_at) >= DATE(EXTRACT(YEAR FROM CURRENT_DATE()) - 1, 10, 1)
+    AND DATE(created_at) < DATE(EXTRACT(YEAR FROM CURRENT_DATE()), 4, 1)
+  GROUP BY quarter
+  ORDER BY quarter
+report: |
+  Executive summary in three sentences, a KPI table with the change against the previous
+  quarter, three findings that each cite a KPI, three action items for the next quarter
+  that each name an owner area and a measurable target, and the SQL in an appendix.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+- term: quarter
+  definition: calendar quarter in UTC
+- term: return rate
+  definition: returned items divided by items that were not cancelled
+tags:
+- report
+- quarter
+- kpi
+- action items
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

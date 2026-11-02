@@ -1,0 +1,26 @@
+id: cancellation-rate-trend
+question: Is the order cancellation rate going up?
+intent: Share of cancelled orders per calendar quarter.
+sql: |
+  SELECT DATE_TRUNC(DATE(created_at), QUARTER) AS quarter, COUNT(*) AS orders,
+    COUNTIF(status = 'Cancelled') AS cancelled,
+    ROUND(SAFE_DIVIDE(COUNTIF(status = 'Cancelled'), COUNT(*)) * 100, 1) AS cancellation_rate_pct
+  FROM orders
+  GROUP BY quarter
+  ORDER BY quarter DESC
+  LIMIT 8
+report: |
+  Gives the latest rate against the average of the previous quarters and calls out a
+  sustained rise rather than a single spike.
+definitions:
+- term: quarter
+  definition: calendar quarter in UTC
+tags:
+- cancellations
+- orders
+- quarter
+- trend
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

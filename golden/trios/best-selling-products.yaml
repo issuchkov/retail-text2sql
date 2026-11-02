@@ -1,0 +1,27 @@
+id: best-selling-products
+question: What are our best-selling products right now?
+intent: Top 10 products by units sold in the last 90 days.
+sql: |
+  SELECT p.name, p.brand, p.category, COUNT(*) AS units, ROUND(SUM(oi.sale_price), 2) AS net_revenue
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.status NOT IN ('Cancelled', 'Returned')
+    AND DATE(oi.created_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  GROUP BY p.name, p.brand, p.category
+  ORDER BY units DESC
+  LIMIT 10
+report: |
+  Lists the products with brand and category and notes when the list is dominated by one
+  category, which signals a stock risk.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- products
+- ranking
+- units
+- recent
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

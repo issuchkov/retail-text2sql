@@ -1,0 +1,27 @@
+id: distribution-center-performance
+question: How do our distribution centers compare?
+intent: Items shipped, transit time and return rate per distribution center.
+sql: |
+  SELECT p.distribution_center_id, COUNT(*) AS items_shipped,
+    ROUND(AVG(TIMESTAMP_DIFF(oi.delivered_at, oi.shipped_at, HOUR)) / 24, 1) AS avg_days_in_transit,
+    ROUND(SAFE_DIVIDE(COUNTIF(oi.status = 'Returned'), COUNT(*)) * 100, 1) AS return_rate_pct
+  FROM order_items AS oi
+  JOIN products AS p ON p.id = oi.product_id
+  WHERE oi.shipped_at IS NOT NULL
+  GROUP BY p.distribution_center_id
+  ORDER BY items_shipped DESC
+report: |
+  Compares centers on speed and returns side by side and flags any center that is slow and
+  high-return at the same time.
+definitions:
+- term: return rate
+  definition: returned items divided by items that were not cancelled
+tags:
+- operations
+- distribution center
+- delivery
+- returns
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

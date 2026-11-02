@@ -1,0 +1,25 @@
+id: repeat-purchase-rate
+question: How many of our customers buy more than once?
+intent: Share of customers with two or more non-cancelled orders.
+sql: |
+  WITH per_customer AS (
+    SELECT customer_key, COUNT(DISTINCT order_id) AS orders
+    FROM orders
+    WHERE status != 'Cancelled'
+    GROUP BY customer_key
+  )
+  SELECT COUNT(*) AS customers, COUNTIF(orders >= 2) AS repeat_customers,
+    ROUND(SAFE_DIVIDE(COUNTIF(orders >= 2), COUNT(*)) * 100, 1) AS repeat_rate_pct
+  FROM per_customer
+report: |
+  Gives the repeat rate as the headline, explains what counts as a repeat customer, and
+  suggests retention levers when the rate is low.
+definitions: []
+tags:
+- customers
+- retention
+- repeat purchase
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null
