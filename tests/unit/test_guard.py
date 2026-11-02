@@ -188,3 +188,10 @@ ACCEPTED_DEMOGRAPHIC_QUERIES = [
 @pytest.mark.parametrize("sql", ACCEPTED_DEMOGRAPHIC_QUERIES)
 def test_accepts_aggregated_demographics_and_customer_level_analysis(sql: str) -> None:
     validate(sql, max_rows=MAX_ROWS)
+
+
+def test_standard_sql_quote_escaping_gets_a_bigquery_hint() -> None:
+    with pytest.raises(QueryRejected) as err:
+        validate("SELECT * FROM products WHERE brand = 'Levi''s'", max_rows=MAX_ROWS)
+    assert err.value.rule == "syntax"
+    assert '"Levi\'s"' in err.value.message

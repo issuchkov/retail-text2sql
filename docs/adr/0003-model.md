@@ -43,6 +43,9 @@ the boundaries as literals in one query.
 - Free-tier latency swings by an order of magnitude within an hour → a per-call timeout
   (well below the 35–50 s seen) that switches to the fallback, plus retries on 429/5xx
   (SPEC §6, PLAN stage 6). This is the main reason the fallback exists.
+- Free-tier limits for gemini-3.5-flash-lite: 15 requests/minute (hit during the stage 4
+  smoke run: 429 with a 10 s `RetryInfo`) and 500/day → retries honour `RetryInfo`, and a
+  429 switches to the fallback, which has its own quota.
 - 500 requests/day bounds evals: a run of ~15 scenarios × 3–6 calls is 50–90 requests, so
   evals run once per change, not in loops.
 - The probe is a smoke test (8 calls), not an eval: answer quality is measured in stage 9.

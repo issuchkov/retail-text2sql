@@ -19,7 +19,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 2 Query layer (scoping, guard, executor) | done |
 | 3 Report store and confirmation | done (tool wiring in stage 4) |
 | 3b Client answers rework (SPEC v2) | done |
-| 4 Agent assembly | todo |
+| 4 Agent assembly | done |
 | 5 CLI | todo |
 | 6 Resilience | todo |
 | 7 Observability | todo |
@@ -147,6 +147,17 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
 - Tools take identity from the session state, never from model arguments.
 - Tests with a fake model: identity cannot be overridden by tool args; redaction applied.
 - Evidence: a manual session answering one question of each SPEC §3.1 type.
+- Done 2026-11-03: `agent/{services,tools,instruction,redaction,agent}.py`; 26 new tests
+  drive the real ADK Runner with a scripted model (scope from the session, no identity
+  parameters in any tool declaration, guard/BigQuery errors returned to the model, empty
+  hint, list_column_values through the guard, answer and saved-report redaction, persona
+  re-read per turn, delete: exact preview, typed phrase, cancel, no-match, no selector).
+  `scripts/smoke_agent.py` as Bob on Gemini + BigQuery: 7/7 answered in 1–6 s — schema +
+  coverage, top customers by customer_key, Levi's vs Wrangler (one guard `syntax`
+  rejection of `'Levi''s'`, self-corrected), monthly net revenue, churned customers by
+  state with the 90-day definition stated, email request refused without a tool call,
+  Calvin Klein refused as out of scope. Follow-up: guard message and instruction now
+  explain BigQuery quote escaping.
 
 ### 5 CLI (0.5 h) — SPEC §3.3, §5.3
 - `retail-agent chat --user <id>`; `rich` rendering of markdown and tables.
@@ -215,8 +226,10 @@ Never cut: SQL guard + brand scoping, PII and demographics rules, delete confirm
 resilience, tracing, golden trio format + sample set.
 
 ## Risks
-- Gemini free tier: daily request limits and latency swings → small eval runs, retries,
-  fallback model, budgets; switch to the paid key via `.env` only.
+- Gemini free tier: 15 requests/minute and 500/day for gemini-3.5-flash-lite (a 429 with
+  `RetryInfo` 10 s was hit right after the smoke run), latency swings → stage 6 honours
+  `RetryInfo`, falls back to the other model's quota, budgets per turn; small eval runs
+  with pauses; the paid key changes only `.env`.
 - Model writing SQL against logical names it has not seen as real tables → schema
   description + golden examples; guard errors are informative for self-correction.
 - Scoped CTEs scan base tables on every query (tens of MB) → fine for this dataset and the

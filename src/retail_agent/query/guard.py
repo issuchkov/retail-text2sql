@@ -57,7 +57,12 @@ def validate(sql: str, *, max_rows: int) -> ValidatedQuery:
     try:
         statements = [s for s in sqlglot.parse(sql, read=DIALECT) if s is not None]
     except ParseError as e:
-        raise QueryRejected("syntax", f"SQL syntax error: {_first_line(e)}") from None
+        message = f"SQL syntax error: {_first_line(e)}"
+        if "Adjacent string literals" in message:
+            message += (
+                " BigQuery does not escape quotes by doubling them: write \"Levi's\" or 'Levi\\'s'."
+            )
+        raise QueryRejected("syntax", message) from None
     if len(statements) != 1:
         raise QueryRejected(
             "multiple_statements", "Send exactly one SELECT statement, without semicolons."
