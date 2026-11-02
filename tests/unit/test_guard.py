@@ -101,3 +101,90 @@ def test_union_gets_limit() -> None:
 )
 def test_accepts_safe_queries(sql: str) -> None:
     validate(sql, max_rows=MAX_ROWS)
+
+
+# --- demographics only in aggregates (SPEC §4.2, §4.4, AC-10) ---------------------------
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT customer_key, city FROM users",
+        "SELECT customer_key, city AS c FROM users",
+        "SELECT city FROM users",  # one row per customer
+        "SELECT * FROM users",
+        "SELECT u FROM users AS u",  # whole row as a struct
+        "WITH t AS (SELECT customer_key, state FROM users) SELECT * FROM t",
+        "SELECT x.s FROM (SELECT state AS s, customer_key FROM users) AS x",
+        "SELECT customer_key, city, COUNT(*) AS n FROM users GROUP BY customer_key, city",
+        "SELECT DISTINCT customer_key, state FROM users",
+        "SELECT o.order_id, u.age FROM orders AS o JOIN users AS u USING (customer_key) "
+        "GROUP BY 1, 2",
+        "SELECT oi.id, u.gender FROM order_items AS oi JOIN users AS u USING (customer_key)",
+        "SELECT customer_key, MAX(age) AS age FROM users GROUP BY customer_key",
+        "SELECT city, ARRAY_AGG(customer_key) AS customers FROM users GROUP BY city",
+        "SELECT city, MAX(customer_key) AS someone FROM users GROUP BY city",
+        "SELECT ARRAY_AGG(STRUCT(customer_key, city)) AS rows FROM users",
+        "SELECT customer_key, COUNT(*) OVER (PARTITION BY state) AS n FROM users",
+        "SELECT u.customer_key, t.city FROM users AS u "
+        "JOIN (SELECT city, COUNT(*) AS n FROM users GROUP BY city) AS t USING (city)",
+        "SELECT city FROM users GROUP BY city UNION ALL SELECT city FROM users",
+        "SELECT CONCAT(customer_key, '-', country) AS k FROM users",
+        "SELECT o.customer_key, (SELECT u.city FROM users AS u "
+        "WHERE u.customer_key = o.customer_key) AS c FROM orders AS o",
+        "SELECT customer_key, TO_JSON_STRING(u) AS j FROM users AS u",
+        "SELECT customer_key FROM users UNION ALL SELECT city FROM users",
+        "SELECT customer_key, RANK() OVER (ORDER BY age) AS r FROM users",
+        "SELECT state, customer_key, COUNT(*) AS n FROM users "
+        "GROUP BY ROLLUP (state, customer_key)",
+        # value subqueries are checked on their own
+        "SELECT ARRAY(SELECT AS STRUCT customer_key, city FROM users) AS everyone",
+        "SELECT (SELECT city FROM users WHERE customer_key = 'abc') AS c",
+        # a group pinned to specific customers is not an aggregate
+        "SELECT city, COUNT(*) AS n FROM users WHERE customer_key = 'abc' GROUP BY city",
+        "SELECT state, COUNT(*) AS n FROM users WHERE customer_key IN ('a', 'b') GROUP BY state",
+        "SELECT u.age, COUNT(*) AS n FROM orders AS o JOIN users AS u USING (customer_key) "
+        "WHERE o.order_id = 42 GROUP BY 1",
+    ],
+)
+def test_rejects_demographics_of_individuals(sql: str) -> None:
+    with pytest.raises(QueryRejected) as err:
+        validate(sql, max_rows=MAX_ROWS)
+    assert err.value.rule == "demographics_not_aggregated"
+    assert "aggregate" in err.value.message
+
+
+# Legal analytical queries; tests/live runs every one of them on BigQuery.
+ACCEPTED_DEMOGRAPHIC_QUERIES = [
+    "SELECT city, COUNT(*) AS customers FROM users GROUP BY city",
+    "SELECT state, COUNT(DISTINCT customer_key) AS buyers FROM users GROUP BY state",
+    "SELECT AVG(age) AS avg_age FROM users",
+    "SELECT DISTINCT country FROM users",
+    "SELECT state, COUNT(*) AS n FROM users GROUP BY state HAVING n > 5 ORDER BY n DESC",
+    "WITH t AS (SELECT state, COUNT(*) AS n FROM users GROUP BY state) "
+    "SELECT * FROM t ORDER BY n DESC",
+    "SELECT age_band, COUNT(*) AS n FROM (SELECT CASE WHEN age < 30 THEN 'under 30' "
+    "ELSE '30+' END AS age_band FROM users) GROUP BY age_band",
+    "SELECT u.traffic_source, DATE_TRUNC(DATE(o.created_at), MONTH) AS month, "
+    "SUM(o.order_revenue) AS revenue FROM orders AS o JOIN users AS u USING (customer_key) "
+    "GROUP BY 1, 2",
+    "SELECT city, ARRAY_AGG(DISTINCT traffic_source) AS sources FROM users GROUP BY city",
+    # customer-level analysis without demographics in the output
+    "SELECT customer_key, SUM(order_revenue) AS revenue FROM orders GROUP BY customer_key",
+    "SELECT * FROM orders",
+    "SELECT o.customer_key, SUM(o.order_revenue) AS revenue FROM orders AS o "
+    "JOIN users AS u USING (customer_key) WHERE u.state = 'California' GROUP BY 1",
+    "SELECT p.category, COUNT(*) AS items FROM order_items AS oi "
+    "JOIN products AS p ON p.id = oi.product_id GROUP BY 1",
+    "SELECT customer_key FROM users ORDER BY age",
+    "SELECT (SELECT COUNT(*) FROM users WHERE city = 'Austin') AS n",
+    "SELECT o.customer_key, SUM(o.order_revenue) AS revenue FROM orders AS o "
+    "WHERE o.customer_key = 'abc' GROUP BY 1",  # pinned, but no demographics output
+    "SELECT state, COUNT(*) AS n FROM users WHERE customer_key IN "
+    "(SELECT customer_key FROM orders WHERE order_revenue > 100) GROUP BY state",
+]
+
+
+@pytest.mark.parametrize("sql", ACCEPTED_DEMOGRAPHIC_QUERIES)
+def test_accepts_aggregated_demographics_and_customer_level_analysis(sql: str) -> None:
+    validate(sql, max_rows=MAX_ROWS)

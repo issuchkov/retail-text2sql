@@ -44,7 +44,12 @@ LOGICAL_TABLES: dict[str, tuple[Column, ...]] = {
         Column("shipped_at", "TIMESTAMP", "When it was shipped"),
         Column("delivered_at", "TIMESTAMP", "When it was delivered"),
         Column("returned_at", "TIMESTAMP", "When it was returned"),
-        Column("sale_price", "FLOAT", "Price paid for the item (revenue)"),
+        Column(
+            "sale_price",
+            "FLOAT",
+            "Price paid for the item. Revenue by default counts only items whose status is "
+            "not Cancelled or Returned",
+        ),
     ),
     "orders": (
         Column("order_id", "INTEGER", "Order id"),
@@ -54,13 +59,19 @@ LOGICAL_TABLES: dict[str, tuple[Column, ...]] = {
             "STRING",
             "Order status: Processing, Shipped, Complete, Cancelled, Returned",
         ),
-        Column("gender", "STRING", "Customer gender, 'M' or 'F'"),
         Column("created_at", "TIMESTAMP", "When the order was placed"),
         Column("returned_at", "TIMESTAMP", "When it was returned"),
         Column("shipped_at", "TIMESTAMP", "When it was shipped"),
         Column("delivered_at", "TIMESTAMP", "When it was delivered"),
-        Column("num_of_item", "INTEGER", "Number of items in the order within your scope"),
-        Column("order_revenue", "FLOAT", "Sum of sale_price of the order's items in your scope"),
+        Column(
+            "num_of_item", "INTEGER", "Number of the order's items within your scope, any status"
+        ),
+        Column(
+            "order_revenue",
+            "FLOAT",
+            "Net revenue of the order's items within your scope: sum of sale_price excluding "
+            "Cancelled and Returned items",
+        ),
     ),
     "users": (
         Column("customer_key", "STRING", "Pseudonymous customer id"),

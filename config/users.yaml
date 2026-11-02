@@ -1,22 +1,21 @@
-# Executive identities for the prototype (SPEC §2). The CLI selects one with --user.
-# Production: identities come from SSO; entitlements from an admin-managed store.
-# scope: `all: true`, or any of departments / categories / brands
-# (dimensions combine with AND, values within a dimension with OR).
+# Identities for the prototype (SPEC §2). The CLI selects one with --user.
+# Production: the frontend's JWT carries the user id and brand scopes; this file goes away.
+# scope: `all: true` (company-wide roles) or a list of brands the user manages.
 users:
   - id: alice
     name: Alice Moreno
-    title: VP Womenswear
+    title: Brand Manager, Calvin Klein
     scope:
-      departments: [Women]
+      brands: [Calvin Klein]
 
   - id: bob
     name: Bob Chen
-    title: Head of Outerwear and Denim
+    title: Denim Portfolio Manager
     scope:
-      categories: [Outerwear & Coats, Jeans]
+      brands: [Levi's, Wrangler, Diesel]
 
   - id: carol
     name: Carol Diaz
-    title: Chief Operating Officer
+    title: Chief Executive Officer
     scope:
       all: true

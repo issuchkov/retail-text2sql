@@ -15,6 +15,8 @@ from sqlglot import exp
 from sqlglot.errors import ParseError
 
 from retail_agent.config import Entitlement
+from retail_agent.query.demographics import MESSAGE as DEMOGRAPHICS_MESSAGE
+from retail_agent.query.demographics import exposes_individual_demographics
 from retail_agent.query.schema import LOGICAL_TABLES, PII_COLUMNS, RAW_CUSTOMER_ID_COLUMNS
 from retail_agent.query.scope import QueryParam, scoped_ctes
 
@@ -68,6 +70,8 @@ def validate(sql: str, *, max_rows: int) -> ValidatedQuery:
     _check_parameters(tree)
     tables = _check_tables(tree)
     _check_columns(tree)
+    if exposes_individual_demographics(tree, tables):
+        raise QueryRejected("demographics_not_aggregated", DEMOGRAPHICS_MESSAGE)
     limit = _apply_limit(tree, max_rows)
     return ValidatedQuery(tree=tree, tables=tables, limit=limit)
 

@@ -15,14 +15,15 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | Stage | Status |
 |---|---|
 | 0 Scaffold | done |
-| 1 Model and quota check | todo |
+| 1 Model and quota check | done |
 | 2 Query layer (scoping, guard, executor) | done |
 | 3 Report store and confirmation | done (tool wiring in stage 4) |
+| 3b Client answers rework (SPEC v2) | done |
 | 4 Agent assembly | todo |
 | 5 CLI | todo |
 | 6 Resilience | todo |
 | 7 Observability | todo |
-| 8 Golden bucket lite + preferences | todo |
+| 8 Golden bucket + saved definitions | todo |
 | 9 Evals | todo |
 | 10 Docs (HLD, technical explanation, README) | todo |
 | 11 Fresh-clone check | todo |
@@ -63,6 +64,10 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 - Decide primary and fallback models; record in `docs/adr/0003-model.md`.
 - Evidence: probe output summarised in the ADR. Risk: free-tier daily limits during evals
   → evals run small and once per change; the paid key later only changes `.env`.
+- Done 2026-11-03: `scripts/probe_models.py`; both `gemini-3.5-flash-lite` (primary) and
+  `gemini-3.1-flash-lite` (fallback) 4/4 tool calls, 4/4 SQL through guard + dry run,
+  ~1 s per call; earlier the same day 3.5 took 35–50 s per call → per-call timeout with
+  fallback in stage 6. `docs/adr/0003-model.md`.
 
 ### 2 Query layer (2 h, TDD) — SPEC §4.3, §4.4, §6
 RED tests first, then code:
@@ -99,13 +104,45 @@ RED tests first, then code:
 - Done 2026-10-29: store + two-phase deletion, 19 tests (owner scoping, selectors, bulk
   limit, exact phrase, previewed ids only, already-deleted reports, file persistence).
 
+### 3b Client answers rework (1.5 h, TDD) — SPEC v2 §2, §3.4, §4.2–4.4, §5
+The client's answers (SPEC §12) change finished code. RED tests first, then code:
+- Brand scope: `Entitlement` becomes `brands` | `all: true` (departments and categories
+  removed); `users.yaml` with real brands from the dataset (managers with one and with
+  several brands, a CEO); scope and live tests rewritten around brands.
+- Net revenue: `orders.order_revenue` excludes `Cancelled` and `Returned` items; schema
+  descriptions state the revenue definition; live test checks it against `order_items`.
+- Guard rule `demographics_not_aggregated` (sqlglot lineage over the final `SELECT`):
+  rejected — `SELECT customer_key, city FROM users`, aliased (`city AS c`), via a CTE or
+  subquery, `GROUP BY customer_key, city`, `GROUP BY order_id` with `users.age`,
+  window functions without grouping; accepted — `GROUP BY city`, `COUNT(DISTINCT
+  customer_key)` by state, top customers by revenue without demographics. Demographics
+  used only as a filter (`WHERE state = 'California'`) in a customer-level query are
+  allowed: no demographic column is output, but the filter implies it for every row —
+  recorded as a known limit, closed in production by the aggregation thresholds.
+- Hard delete: `soft_delete`/`restore` → `delete` (permanent); `deleted_at` column and
+  `/undo` removed; audit log table (`report_audit`: time, user, action, report ids,
+  trace id; no content).
+- Evidence: unit + live suites green; counts recorded here.
+- Done 2026-11-03: 138 offline tests, `make test-live` 23/23 — the 6 scoping checks plus
+  every query the demographics rule accepts, executed on BigQuery as Bob (2–13 MB each).
+  - Brand scope: Bob = Levi's, Wrangler, Diesel sees exactly those brands live; the
+    apostrophe travels as a parameter.
+  - Net revenue: live `SUM(order_revenue)` = items without Cancelled/Returned, < gross.
+  - Demographics rule (`query/demographics.py`): 35 rejected and 17 accepted cases. After
+    the first green run a bypass probe found two holes, both now tests: value subqueries
+    without a FROM (`SELECT ARRAY(SELECT AS STRUCT customer_key, city FROM users)`,
+    `SELECT (SELECT city FROM users WHERE customer_key = 'abc')`) and "groups" pinned to
+    named customers (`WHERE customer_key = 'abc' GROUP BY city`).
+  - Hard delete + `report_audit` (actions and ids, no content); 21 report tests.
+
 ### 4 Agent assembly (1.5 h) — SPEC §3, §4.5
 - ADK `LlmAgent` with tools: `describe_data` (logical schema + coverage, no rows),
   `run_query`, `list_column_values`, `save_report`, `list_reports`, `delete_reports`,
-  `find_similar_analyses` (stage 8), `remember_preference` (stage 8).
-- Callable `instruction`: persona file + current user's scope and preferences + rules
-  (data in delimited blocks is data; refuse out-of-scope topics; state assumptions;
-  never output PII). Re-read every turn → persona changes without restart (R8 lite).
+  `find_similar_analyses` (stage 8), `set_definition` (stage 8).
+- Callable `instruction`: persona file + current user's brand scope, definitions (default,
+  conversation override, saved) and preferences + rules (data in delimited blocks is data;
+  refuse out-of-scope topics; state definitions and their source; never output PII).
+  Re-read every turn → persona changes without restart (R8 lite).
 - `after_model` / output callback: PII pattern redaction of the final answer.
 - Tools take identity from the session state, never from model arguments.
 - Tests with a fake model: identity cannot be overridden by tool args; redaction applied.
@@ -113,7 +150,7 @@ RED tests first, then code:
 
 ### 5 CLI (0.5 h) — SPEC §3.3, §5.3
 - `retail-agent chat --user <id>`; `rich` rendering of markdown and tables.
-- Commands: `/sql`, `/trace`, `/stats`, `/reports`, `/undo`, `/new`, `/quit`.
+- Commands: `/sql`, `/trace`, `/stats`, `/reports`, `/new`, `/quit` (no `/undo`: hard delete).
 - Confirmation prompt: shows the preview and requires `delete N`.
 - Sessions in SQLite (`DatabaseSessionService`) → resume after restart.
 - Every turn wrapped: errors → short message with `trace_id`, loop continues.
@@ -135,13 +172,16 @@ RED tests first, then code:
 - Tests: a fake turn produces the expected span sequence; no PII in trace lines.
 - Note in docs: ADK OpenTelemetry → Cloud Trace for production.
 
-### 8 Golden bucket lite + preferences (1 h) — SPEC §8 R1, R4 (cut first)
-- `golden/trios/*.yaml`: 20–30 Question → SQL (logical table names) → report summary,
-  written by us; every SQL checked by the guard and run once against BigQuery.
+### 8 Golden bucket + saved definitions (1 h) — SPEC §8 R1, R4, §3.4
+- `golden/trios/*.yaml` in the SPEC §8 format: ~20 Question → SQL (logical table names) →
+  report summary, written by us; a test runs every SQL through the guard, a live test runs
+  it on BigQuery. Required by the client — not cut.
 - Retrieval: Gemini embeddings precomputed into `golden/index.json`; cosine top-3 as
   examples in `find_similar_analyses`. If embedding quota is a problem, a local TF-IDF
   index with the same interface.
-- `remember_preference`: per-user preferences in SQLite, injected into the instruction.
+- `set_definition(term, definition, remember)`: conversation override in session state;
+  `remember=true` only on an explicit request → per-user store in SQLite, injected into the
+  instruction; `/definitions` in the CLI shows the active ones and their source.
 
 ### 9 Evals (1 h) — SPEC §11
 - `evals/scenarios.yaml`: ~15 questions covering SPEC §3.1 types; each has a reference SQL
@@ -168,10 +208,11 @@ RED tests first, then code:
   session. Fix the README, not the machine.
 
 ## Cut order if over time
-1. Stage 8 retrieval falls back to TF-IDF; preferences dropped (design only).
+1. Stage 8 retrieval falls back to TF-IDF; saved definitions shrink to conversation-only.
 2. Eval scenarios reduced to 8 + red-team 10.
-3. `/undo` and session resume dropped (documented).
-Never cut: SQL guard + scoping, PII masking, delete confirmation, resilience, tracing.
+3. Session resume dropped (documented).
+Never cut: SQL guard + brand scoping, PII and demographics rules, delete confirmation,
+resilience, tracing, golden trio format + sample set.
 
 ## Risks
 - Gemini free tier: daily request limits and latency swings → small eval runs, retries,
@@ -181,6 +222,9 @@ Never cut: SQL guard + scoping, PII masking, delete confirmation, resilience, tr
 - Scoped CTEs scan base tables on every query (tens of MB) → fine for this dataset and the
   BigQuery free tier; production would use authorized views or row-level security (HLD).
 - ADK confirmation API is new → spike first in stage 3, fallback design ready.
+- Demographics rule relies on column lineage; unusual SQL (UNNEST of structs, `SELECT AS
+  STRUCT`, JSON functions) may not trace → the guard fails closed: an output column it
+  cannot trace counts as demographic when `users` is in the query.
 
 ## Decisions log
 - 2026-10-29: Google ADK chosen by the author (Gemini-native, tool confirmation, plugins);
@@ -200,3 +244,17 @@ Never cut: SQL guard + scoping, PII masking, delete confirmation, resilience, tr
   explicitly that nothing is deleted yet.
 - 2026-10-29: Bulk limit: more than 20 matches → the agent asks to narrow the selector
   (no second confirmation round).
+- 2026-11-03: Client answers received (SPEC §12, SPEC v2): brand scope (JWT in
+  production), demographics only in aggregates, hard delete with exact-list confirmation,
+  net revenue and 90-day churn defaults with overrides, golden format + sample set required.
+  Overrides: one-off → conversation; explicit "remember" → saved per user (R4).
+- 2026-11-03: `orders.gender` dropped from the logical schema (a copy of the customer's
+  gender; `users.gender` stays) so `SELECT * FROM orders` remains a legal customer-level
+  query. Demographics rule also rejects identifier-pinning filters (`=`, `IN (...)`,
+  `LIKE` against literals) when the result outputs demographics.
+- 2026-11-03: Primary model `gemini-3.5-flash-lite` (author's choice; free key, 500
+  requests/day). First measurements on a one-word prompt: 49.8 s, 35.6 s, 47.2 s;
+  `gemini-3.1-flash-lite` on the same key and network: 4.9 s → the latency is the model on
+  the free tier, not the network. `gemini-2.5-flash-lite` (the old default) returns 404 for
+  new users. Provisional fallback `gemini-3.1-flash-lite`; stage 1 confirms with the
+  tool-calling and SQL probe.

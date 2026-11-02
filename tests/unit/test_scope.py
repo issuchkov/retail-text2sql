@@ -9,8 +9,8 @@ from retail_agent.query.schema import PII_COLUMNS
 
 DATASET = "bigquery-public-data.thelook_ecommerce"
 SALT = "test-salt"
-BOB = Entitlement(categories=["Outerwear & Coats", "Jeans"])
-ALICE = Entitlement(departments=["Women"])
+BOB = Entitlement(brands=["Levi's", "Wrangler", "Diesel"])
+ALICE = Entitlement(brands=["Calvin Klein"])
 CAROL = Entitlement(all=True)
 
 
@@ -50,21 +50,20 @@ def test_model_ctes_come_after_scoped_ctes() -> None:
     assert cte_names(q.sql) == ["products", "order_items", "orders", "m"]
 
 
-def test_scope_filters_are_parameters_not_literals() -> None:
+def test_brand_scope_is_a_parameter_not_a_literal() -> None:
     q = prepare("SELECT category FROM products", BOB)
-    assert "@scope_categories" in q.sql
-    assert "Outerwear" not in q.sql  # values never spliced into SQL text
+    assert "@scope_brands" in q.sql
+    assert "Levi" not in q.sql  # values never spliced into SQL text
     params = {p.name: p for p in q.params}
-    assert params["scope_categories"].value == ["Outerwear & Coats", "Jeans"]
-    assert params["scope_categories"].type == "STRING"
-    assert params["scope_categories"].array
-    assert "scope_departments" not in params
+    assert params["scope_brands"].value == ["Levi's", "Wrangler", "Diesel"]
+    assert params["scope_brands"].type == "STRING"
+    assert params["scope_brands"].array
+    assert set(params) == {"scope_brands"}
 
 
-def test_department_scope() -> None:
+def test_single_brand_scope() -> None:
     q = prepare("SELECT category FROM products", ALICE)
-    assert "@scope_departments" in q.sql
-    assert {p.name for p in q.params} == {"scope_departments"}
+    assert {p.name: p.value for p in q.params} == {"scope_brands": ["Calvin Klein"]}
 
 
 def test_unrestricted_scope_has_no_product_filter() -> None:
@@ -82,7 +81,11 @@ def test_customer_ids_are_pseudonymised_with_salt_parameter() -> None:
 
 
 def test_bound_sql_never_selects_pii() -> None:
-    q = prepare("SELECT * FROM users JOIN orders USING (customer_key)", CAROL)
+    q = prepare(
+        "SELECT u.state, SUM(o.order_revenue) AS revenue FROM users AS u "
+        "JOIN orders AS o USING (customer_key) GROUP BY 1",
+        CAROL,
+    )
     columns = {
         c.name.lower() for c in sqlglot.parse_one(q.sql, read="bigquery").find_all(exp.Column)
     }
@@ -90,7 +93,11 @@ def test_bound_sql_never_selects_pii() -> None:
 
 
 def test_base_tables_only_appear_inside_scoped_ctes() -> None:
-    q = prepare("SELECT * FROM users JOIN orders USING (customer_key)", BOB)
+    q = prepare(
+        "SELECT u.state, COUNT(*) AS orders FROM users AS u "
+        "JOIN orders AS o USING (customer_key) GROUP BY 1",
+        BOB,
+    )
     assert base_tables(q.sql) <= {"products", "order_items", "orders", "users"}
     tree = sqlglot.parse_one(q.sql, read="bigquery")
     outer = tree.copy()
@@ -118,3 +125,11 @@ def test_logical_table_names_are_normalised_to_scoped_ctes() -> None:
     outer = tree.copy()
     outer.set("with_", None)
     assert [t.name for t in outer.find_all(exp.Table)] == ["orders"]
+
+
+def test_schema_states_the_revenue_definition() -> None:
+    from retail_agent.query.schema import LOGICAL_TABLES
+
+    described = {c.name: c.description for c in LOGICAL_TABLES["orders"]}
+    assert "Cancelled" in described["order_revenue"]
+    assert "Returned" in described["order_revenue"]

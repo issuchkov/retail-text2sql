@@ -1,4 +1,8 @@
-"""Saved-report library (SPEC §5.1). SQLite in the prototype; every read is owner-scoped."""
+"""Saved-report library (SPEC §5.1, §5.3). SQLite in the prototype.
+
+Every read and delete is owner-scoped. Deletes are permanent; the audit log keeps who did
+what to which report ids, never report content.
+"""
 
 from __future__ import annotations
 
@@ -20,10 +24,17 @@ CREATE TABLE IF NOT EXISTS reports (
     body TEXT NOT NULL,
     entities TEXT NOT NULL,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
-    deleted_at TEXT
+    updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS reports_owner ON reports (owner_id, deleted_at);
+CREATE INDEX IF NOT EXISTS reports_owner ON reports (owner_id);
+CREATE TABLE IF NOT EXISTS report_audit (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    report_ids TEXT NOT NULL,
+    trace_id TEXT NOT NULL
+);
 """
 
 
@@ -37,7 +48,15 @@ class Report:
     entities: list[str]
     created_at: dt.datetime
     updated_at: dt.datetime
-    deleted_at: dt.datetime | None
+
+
+@dataclass(frozen=True)
+class AuditEntry:
+    at: dt.datetime
+    user_id: str
+    action: str
+    report_ids: list[int]
+    trace_id: str
 
 
 class Selector(BaseModel):
@@ -95,14 +114,14 @@ class ReportStore:
 
     def get(self, owner_id: str, report_id: int) -> Report | None:
         row = self._db.execute(
-            "SELECT * FROM reports WHERE id = ? AND owner_id = ? AND deleted_at IS NULL",
+            "SELECT * FROM reports WHERE id = ? AND owner_id = ?",
             (report_id, owner_id),
         ).fetchone()
         return _to_report(row) if row else None
 
     def list(self, owner_id: str) -> list[Report]:
         rows = self._db.execute(
-            "SELECT * FROM reports WHERE owner_id = ? AND deleted_at IS NULL ORDER BY id",
+            "SELECT * FROM reports WHERE owner_id = ? ORDER BY id",
             (owner_id,),
         ).fetchall()
         return [_to_report(r) for r in rows]
@@ -121,32 +140,44 @@ class ReportStore:
             reports = [r for r in reports if r.created_at.date() < selector.older_than]
         return reports
 
-    def soft_delete(self, owner_id: str, ids: list[int]) -> list[int]:
-        return self._set_deleted(owner_id, ids, deleted=True)
-
-    def restore(self, owner_id: str, ids: list[int]) -> list[int]:
-        return self._set_deleted(owner_id, ids, deleted=False)
-
-    def _set_deleted(self, owner_id: str, ids: list[int], *, deleted: bool) -> list[int]:
+    def delete(self, owner_id: str, ids: list[int]) -> list[int]:
+        """Permanently delete those of `ids` that exist and belong to `owner_id`."""
         if not ids:
             return []
         marks = ",".join("?" * len(ids))
-        state = "deleted_at IS NULL" if deleted else "deleted_at IS NOT NULL"
         with self._db:
             rows = self._db.execute(
-                f"SELECT id FROM reports WHERE owner_id = ? AND {state} AND id IN ({marks}) "
-                "ORDER BY id",
+                f"SELECT id FROM reports WHERE owner_id = ? AND id IN ({marks}) ORDER BY id",
                 (owner_id, *ids),
             ).fetchall()
-            affected = [r["id"] for r in rows]
-            if affected:
-                stamp = self._clock().isoformat() if deleted else None
-                marks = ",".join("?" * len(affected))
-                self._db.execute(
-                    f"UPDATE reports SET deleted_at = ? WHERE id IN ({marks})",
-                    (stamp, *affected),
-                )
-        return affected
+            deleted = [r["id"] for r in rows]
+            if deleted:
+                marks = ",".join("?" * len(deleted))
+                self._db.execute(f"DELETE FROM reports WHERE id IN ({marks})", deleted)
+        return deleted
+
+    def audit(self, user_id: str, action: str, report_ids: list[int], trace_id: str) -> None:
+        with self._db:
+            self._db.execute(
+                "INSERT INTO report_audit (at, user_id, action, report_ids, trace_id) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (self._clock().isoformat(), user_id, action, json.dumps(report_ids), trace_id),
+            )
+
+    def audit_log(self, user_id: str) -> list[AuditEntry]:
+        rows = self._db.execute(
+            "SELECT * FROM report_audit WHERE user_id = ? ORDER BY id", (user_id,)
+        ).fetchall()
+        return [
+            AuditEntry(
+                at=dt.datetime.fromisoformat(r["at"]),
+                user_id=r["user_id"],
+                action=r["action"],
+                report_ids=json.loads(r["report_ids"]),
+                trace_id=r["trace_id"],
+            )
+            for r in rows
+        ]
 
 
 def _searchable(report: Report) -> str:
@@ -163,5 +194,4 @@ def _to_report(row: sqlite3.Row) -> Report:
         entities=json.loads(row["entities"]),
         created_at=dt.datetime.fromisoformat(row["created_at"]),
         updated_at=dt.datetime.fromisoformat(row["updated_at"]),
-        deleted_at=dt.datetime.fromisoformat(row["deleted_at"]) if row["deleted_at"] else None,
     )

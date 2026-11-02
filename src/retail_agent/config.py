@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -26,8 +26,8 @@ class Settings(BaseSettings):
     dataset: str = "bigquery-public-data.thelook_ecommerce"
     bq_location: str = "US"
 
-    model: str = Field("gemini-2.5-flash", alias="RETAIL_MODEL")
-    fallback_model: str = Field("gemini-2.5-flash-lite", alias="RETAIL_FALLBACK_MODEL")
+    model: str = Field("gemini-3.5-flash-lite", alias="RETAIL_MODEL")
+    fallback_model: str = Field("gemini-3.1-flash-lite", alias="RETAIL_FALLBACK_MODEL")
 
     max_bytes_billed: int = Field(1_000_000_000, alias="RETAIL_MAX_BYTES_BILLED")
     max_result_rows: int = Field(1_000, alias="RETAIL_MAX_RESULT_ROWS")
@@ -41,35 +41,21 @@ class Settings(BaseSettings):
 
 
 class Entitlement(BaseModel):
-    """Products an executive may analyse (SPEC §4.3).
+    """Brands a user may analyse (SPEC §4.3): a brand list, or `all: true` (e.g. the CEO)."""
 
-    Dimensions that are set are combined with AND; values inside one dimension with OR.
-    """
+    model_config = ConfigDict(extra="forbid")
 
     all: bool = False
-    departments: list[str] = Field(default_factory=list)
-    categories: list[str] = Field(default_factory=list)
     brands: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _exactly_one_mode(self) -> Entitlement:
-        restricted = bool(self.departments or self.categories or self.brands)
-        if self.all == restricted:
-            raise ValueError("entitlement must be either `all: true` or at least one filter list")
+        if self.all == bool(self.brands):
+            raise ValueError("scope must be either `all: true` or a non-empty `brands` list")
         return self
 
     def describe(self) -> str:
-        if self.all:
-            return "all products"
-        parts = []
-        for label, values in (
-            ("departments", self.departments),
-            ("categories", self.categories),
-            ("brands", self.brands),
-        ):
-            if values:
-                parts.append(f"{label}: {', '.join(values)}")
-        return "; ".join(parts)
+        return "all brands" if self.all else f"brands: {', '.join(self.brands)}"
 
 
 class UserProfile(BaseModel):

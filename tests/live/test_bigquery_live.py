@@ -6,11 +6,12 @@ import pytest
 
 from retail_agent.config import Entitlement
 from retail_agent.query.guard import bind, validate
+from tests.unit.test_guard import ACCEPTED_DEMOGRAPHIC_QUERIES
 
 pytestmark = pytest.mark.live
 
-BOB = Entitlement(categories=["Outerwear & Coats", "Jeans"])
-ALICE = Entitlement(departments=["Women"])
+BOB = Entitlement(brands=["Levi's", "Wrangler", "Diesel"])
+ALICE = Entitlement(brands=["Calvin Klein"])
 CAROL = Entitlement(all=True)
 
 
@@ -19,11 +20,11 @@ def run(executor, settings, sql, scope):
     return executor.run(q, max_rows=1000)
 
 
-def test_products_are_limited_to_entitlement(executor, settings) -> None:
-    r = run(executor, settings, "SELECT DISTINCT category FROM products", BOB)
-    assert {row["category"] for row in r.rows} == {"Outerwear & Coats", "Jeans"}
-    r = run(executor, settings, "SELECT DISTINCT department FROM products", ALICE)
-    assert {row["department"] for row in r.rows} == {"Women"}
+def test_products_are_limited_to_brand_scope(executor, settings) -> None:
+    r = run(executor, settings, "SELECT DISTINCT brand FROM products", BOB)
+    assert {row["brand"] for row in r.rows} == {"Levi's", "Wrangler", "Diesel"}
+    r = run(executor, settings, "SELECT DISTINCT brand FROM products", ALICE)
+    assert {row["brand"] for row in r.rows} == {"Calvin Klein"}
 
 
 def test_out_of_scope_items_are_invisible(executor, settings) -> None:
@@ -31,21 +32,24 @@ def test_out_of_scope_items_are_invisible(executor, settings) -> None:
         executor,
         settings,
         "SELECT COUNT(*) AS n FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id "
-        "WHERE p.category NOT IN ('Outerwear & Coats', 'Jeans')",
+        "WHERE p.brand NOT IN (\"Levi's\", 'Wrangler', 'Diesel')",
         BOB,
     )
     assert r.rows == [{"n": 0}]
 
 
-def test_order_totals_are_recomputed_over_scope(executor, settings) -> None:
+def test_order_revenue_is_net_of_cancelled_and_returned_items(executor, settings) -> None:
     sql = (
         "SELECT (SELECT ROUND(SUM(order_revenue), 2) FROM orders) AS from_orders, "
-        "(SELECT ROUND(SUM(sale_price), 2) FROM order_items) AS from_items, "
+        "(SELECT ROUND(SUM(IF(status NOT IN ('Cancelled', 'Returned'), sale_price, 0)), 2) "
+        "FROM order_items) AS net_from_items, "
+        "(SELECT ROUND(SUM(sale_price), 2) FROM order_items) AS gross_from_items, "
         "(SELECT SUM(num_of_item) FROM orders) AS items_in_orders, "
         "(SELECT COUNT(*) FROM order_items) AS items"
     )
     r = run(executor, settings, sql, BOB).rows[0]
-    assert r["from_orders"] == pytest.approx(r["from_items"])
+    assert r["from_orders"] == pytest.approx(r["net_from_items"])
+    assert r["from_orders"] < r["gross_from_items"]
     assert r["items_in_orders"] == r["items"]
 
 
@@ -53,8 +57,8 @@ def test_customer_keys_are_pseudonyms_and_join(executor, settings) -> None:
     r = run(
         executor,
         settings,
-        "SELECT u.customer_key, u.state, COUNT(*) AS orders FROM orders AS o "
-        "JOIN users AS u USING (customer_key) GROUP BY 1, 2 ORDER BY orders DESC LIMIT 5",
+        "SELECT u.customer_key, COUNT(*) AS orders FROM orders AS o "
+        "JOIN users AS u USING (customer_key) GROUP BY 1 ORDER BY orders DESC LIMIT 5",
         BOB,
     )
     assert r.rows
@@ -82,3 +86,9 @@ def test_typical_query_is_well_under_the_byte_cap(executor, settings) -> None:
     estimate = executor.dry_run(q)
     print(f"dry-run estimate: {estimate / 1e6:.1f} MB")
     assert estimate < settings.max_bytes_billed / 10
+
+
+@pytest.mark.parametrize("sql", ACCEPTED_DEMOGRAPHIC_QUERIES)
+def test_queries_the_guard_accepts_run_on_bigquery(executor, settings, sql) -> None:
+    result = run(executor, settings, sql, BOB)
+    assert result.bytes_processed < settings.max_bytes_billed

@@ -68,14 +68,14 @@ def test_empty_selector_is_invalid() -> None:
         Selector()
 
 
-def test_soft_delete_and_restore_only_own(store: ReportStore) -> None:
+def test_delete_is_permanent_and_only_own(store: ReportStore) -> None:
     mine = save(store)
     theirs = save(store, owner="alice")
-    assert store.soft_delete("bob", [mine.id, theirs.id]) == [mine.id]
+    assert store.delete("bob", [mine.id, theirs.id]) == [mine.id]
     assert store.list("bob") == []
     assert store.get("alice", theirs.id) is not None
-    assert store.restore("bob", [mine.id]) == [mine.id]
-    assert [r.id for r in store.list("bob")] == [mine.id]
+    rows = store._db.execute("SELECT id FROM reports").fetchall()
+    assert [r["id"] for r in rows] == [theirs.id]  # the row is gone, not flagged
 
 
 def test_plan_with_no_match_needs_no_confirmation(store: ReportStore) -> None:
@@ -128,7 +128,7 @@ def test_reports_already_gone_are_reported(store: ReportStore) -> None:
     a = save(store, title="Client X Q1")
     b = save(store, title="Client X Q2")
     plan = plan_deletion(store, "bob", Selector(mentions="client x"), "c1")
-    store.soft_delete("bob", [a.id])
+    store.delete("bob", [a.id])
     outcome = execute_deletion(store, "bob", plan.ids, typed="delete 2")
     assert outcome.status == "deleted"
     assert outcome.ids == [b.id]
@@ -142,3 +142,30 @@ def test_store_persists_to_file(tmp_path, clock: Clock) -> None:
     got = second.get("bob", r.id)
     assert got is not None
     assert got.entities == ["Jeans"]
+
+
+def test_audit_records_the_flow_without_report_content(store: ReportStore) -> None:
+    a = save(store, title="Client X secret plan", body="confidential numbers")
+    plan = plan_deletion(store, "bob", Selector(mentions="client x"), "c1", trace_id="t1")
+    execute_deletion(store, "bob", plan.ids, typed="delete 1", trace_id="t2")
+    log = store.audit_log("bob")
+    assert [(e.action, e.report_ids, e.trace_id) for e in log] == [
+        ("delete_preview", [a.id], "t1"),
+        ("delete_confirmed", [a.id], "t2"),
+    ]
+    dumped = repr(log)
+    assert "secret" not in dumped
+    assert "confidential" not in dumped
+
+
+def test_audit_records_cancel_and_empty_match(store: ReportStore) -> None:
+    a = save(store, title="Client X")
+    plan_deletion(store, "bob", Selector(mentions="nothing"), "c1", trace_id="t0")
+    plan = plan_deletion(store, "bob", Selector(mentions="client x"), "c1", trace_id="t1")
+    execute_deletion(store, "bob", plan.ids, typed="yes", trace_id="t2")
+    assert [(e.action, e.report_ids) for e in store.audit_log("bob")] == [
+        ("delete_nothing_matched", []),
+        ("delete_preview", [a.id]),
+        ("delete_cancelled", [a.id]),
+    ]
+    assert store.audit_log("alice") == []

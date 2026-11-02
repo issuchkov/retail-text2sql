@@ -1,8 +1,8 @@
 """Scoped, PII-free CTEs over the base tables (SPEC §4.2, §4.3).
 
-Each logical table becomes a CTE that only contains the user's entitled products and the
-rows derived from them, with PII columns dropped and customer ids replaced by a salted
-hash. Entitlement values and the salt are BigQuery query parameters.
+Each logical table becomes a CTE that only contains the products of the user's brands and
+the rows derived from them, with PII columns dropped and customer ids replaced by a salted
+hash. Brand values and the salt are BigQuery query parameters.
 """
 
 from __future__ import annotations
@@ -28,8 +28,6 @@ _DEPENDS_ON: dict[str, tuple[str, ...]] = {
     "users": ("products",),
 }
 
-_SCOPE_DIMENSIONS = (("departments", "department"), ("categories", "category"), ("brands", "brand"))
-
 
 def _customer_key(column: str) -> str:
     return f"SUBSTR(TO_HEX(SHA256(CONCAT(@pseudonym_salt, CAST({column} AS STRING)))), 1, 16)"
@@ -50,10 +48,11 @@ def _bodies(dataset: str, product_filter: str) -> dict[str, str]:
         ),
         "orders": (
             f"SELECT o.order_id, {_customer_key('o.user_id')} AS customer_key, o.status, "
-            "o.gender, o.created_at, o.returned_at, o.shipped_at, o.delivered_at, "
+            "o.created_at, o.returned_at, o.shipped_at, o.delivered_at, "
             "s.num_of_item, s.order_revenue "
             f"FROM {base}.orders` AS o JOIN (SELECT order_id, COUNT(*) AS num_of_item, "
-            "SUM(sale_price) AS order_revenue FROM order_items GROUP BY order_id) AS s "
+            "SUM(IF(status IN ('Cancelled', 'Returned'), 0, sale_price)) AS order_revenue "
+            "FROM order_items GROUP BY order_id) AS s "
             "ON s.order_id = o.order_id"
         ),
         "users": (
@@ -85,14 +84,10 @@ def scoped_ctes(
     tables: set[str], scope: Entitlement, *, dataset: str, salt: str
 ) -> tuple[list[tuple[str, str]], list[QueryParam]]:
     params: list[QueryParam] = []
-    conditions = []
+    product_filter = "TRUE"
     if not scope.all:
-        for field, column in _SCOPE_DIMENSIONS:
-            values = getattr(scope, field)
-            if values:
-                conditions.append(f"{column} IN UNNEST(@scope_{field})")
-                params.append(QueryParam(f"scope_{field}", "STRING", list(values), array=True))
-    product_filter = " AND ".join(conditions) or "TRUE"
+        product_filter = "brand IN UNNEST(@scope_brands)"
+        params.append(QueryParam("scope_brands", "STRING", list(scope.brands), array=True))
 
     bodies = _bodies(dataset, product_filter)
     if not scope.all:
