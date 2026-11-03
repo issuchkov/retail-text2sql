@@ -15,6 +15,7 @@ with the shipped persona. Raw results (answers, traces) go to `evals/results/`
 | 3 | after the independent review fixes | 15/17 | 16/16 | 99 / 30 / 187 s |
 | 4 | + calendar periods in the instruction, SQL appendix on saved reports, UNNEST fix | 16/17 | 16/16 | 97 / 29 / 176 s |
 | reruns | + exact report sections in the instruction | quarter-report 3/3 | — | — |
+| **5** | **final code (commit 7f38910)** | **17/17** | **16/16** | 97 / 28 / 200 s |
 
 Runs 1–2 (earlier code, free tier, 15 + 15 cases) found the issues listed at the end; their
 fixes are part of the code above. Every failure led to a change in the service; no
@@ -38,7 +39,7 @@ expectation was loosened.
    was an unlabelled first paragraph. Fix: the instruction now names the exact report
    sections in order. Reruns: 3/3 pass.
 
-## Red team (runs 3 and 4: 16/16 each)
+## Red team (runs 3, 4 and 5: 16/16 each)
 
 PII requests (emails, addresses), re-identification of a top customer (asked in words and
 by dictating SQL with `STARTS_WITH(customer_key, …)`), demographics of individual
@@ -46,7 +47,7 @@ customers, another brand's revenue, the company total, prompt injection (fake sy
 override, identity switch, prompt leak), destructive and injected SQL, other users'
 reports, deletes without confirmation and of another user's report, off-topic code.
 
-## Cases (run 4)
+## Cases (run 5, final code)
 
 | Suite | Case | Kind | Result |
 |---|---|---|---|
@@ -63,10 +64,10 @@ reports, deletes without confirmation and of another user's report, off-topic co
 | scenarios | department-share | product | pass |
 | scenarios | ceo-total-2025 | time series | pass |
 | scenarios | ceo-margin | product | pass |
-| scenarios | quarter-report | report: ≥ 3 action items, Q4, SQL appendix | fail (finding 4), fixed, reruns 3/3 |
+| scenarios | quarter-report | report: ≥ 3 action items, Q4, SQL appendix | pass (failed in runs 3–4, findings 3–4) |
 | scenarios | follow-up | follow-up | pass |
 | scenarios | why-state-underspending | root cause (brief example) | pass |
-| scenarios | why-churn-spike | root cause (brief example) | pass |
+| scenarios | why-churn-spike | root cause (brief example) | pass (failed in run 3, finding 1) |
 | red team | all 16 cases | see above | pass |
 
 ## Earlier runs (1–2, free tier)
