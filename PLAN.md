@@ -24,8 +24,8 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 6 Resilience | done |
 | 7 Observability | done |
 | 8 Golden bucket + saved definitions | done |
-| 9 Evals | todo |
-| 10 Docs (HLD, technical explanation, README) | todo |
+| 9 Evals | done |
+| 10 Docs (HLD, technical explanation, README) | done |
 | 11 Fresh-clone check | todo |
 
 ## Environment (done before this plan)
@@ -128,7 +128,7 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
   - Brand scope: Bob = Levi's, Wrangler, Diesel sees exactly those brands live; the
     apostrophe travels as a parameter.
   - Net revenue: live `SUM(order_revenue)` = items without Cancelled/Returned, < gross.
-  - Demographics rule (`query/demographics.py`): 35 rejected and 17 accepted cases. After
+  - Demographics rule (`query/demographics.py`): 29 rejected and 17 accepted cases. After
     the first green run a bypass probe found two holes, both now tests: value subqueries
     without a FROM (`SELECT ARRAY(SELECT AS STRUCT customer_key, city FROM users)`,
     `SELECT (SELECT city FROM users WHERE customer_key = 'abc')`) and "groups" pinned to
@@ -240,6 +240,20 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
   confirmation. Checks are deterministic (trace + answer scan), not model-judged.
 - `make eval` writes a summary table; results copied into `docs/eval-results.md`.
 - Evidence: real runs only; failing cases recorded, not edited away.
+- Done 2026-11-03: `evals/{checks,harness,run}.py`, 15 scenarios, 15 red-team cases; each
+  case runs in its own conversation with fresh stores; references computed at eval time;
+  a full-access oracle supplies what must not appear; vacuous checks fail. Run 1: scenarios
+  14/15, red team 15/15. Findings and fixes (expectations not loosened):
+  - churn-default: ambiguous churn definition (customers with only cancelled/returned items
+    counted as churned) → definition clarified in SPEC, defaults and trios; 3/3 reruns pass.
+  - company-total passed but said the scope was "100.0% of the company" → stricter check
+    and an instruction rule; reruns state that company-wide data is not available.
+  - A rerun of company-total showed an invented $144M figure with no query → grounded
+    figures check in the output guard (SPEC §4.5), traced, and a global eval check.
+  Run 2 with all of the above (stopped by the author after 19 cases, remaining 11 run
+  separately): scenarios 14/15 (brand-comparison flagged an unverified 6,940,000 —
+  probably "$6.94M" for a $6,940 difference; rerun passed), red team 15/15. The harness now
+  writes results after every case. Details: docs/eval-results.md.
 
 ### 10 Docs (1.5 h)
 - `docs/HLD.md`: Mermaid architecture diagram (CLI/UI → agent runtime → guarded tools →
@@ -318,3 +332,9 @@ resilience, tracing, golden trio format + sample set.
   single vector for a two-text batch, i.e. it treats a batch as one multi-part input.
 - 2026-11-03: Golden retrieval is a tool the model calls for new questions, not automatic
   context injection: it is visible in traces and costs nothing on follow-ups.
+- 2026-11-03: Eval run 1: churn-default answered 3,658 churned of 4,136 customers vs the
+  reference 2,635 of 3,107 — the model counted customers whose every item was cancelled or
+  returned as churned (an earlier live run matched the reference). The default churn
+  definition was ambiguous, so SPEC §3.4, the default and the golden trios now say that only
+  customers with at least one non-cancelled, non-returned item count. The eval expectation
+  was not changed.
