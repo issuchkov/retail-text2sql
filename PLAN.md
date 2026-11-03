@@ -26,7 +26,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 8 Golden bucket + saved definitions | done |
 | 9 Evals | done |
 | 10 Docs (HLD, technical explanation, README) | done |
-| 11 Fresh-clone check | todo |
+| 11 Fresh-clone check | done |
 
 ## Environment (done before this plan)
 
@@ -269,6 +269,13 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
 ### 11 Fresh-clone check (0.5 h) — AC-9
 - Clone into a temporary directory, follow README only, run `make test` and one chat
   session. Fix the README, not the machine.
+- Done 2026-11-03: `git clone` of 19b25b8 into a scratch folder; `make setup` from
+  `uv.lock`; without `.env` and with the Google variables unset `make test` 324 passed and
+  `make lint` clean; with `.env` `make test-live` 51 passed; `make run USER_ID=bob` answered
+  the Q3 brand question (Diesel $20,508.87, golden retrieval by embedding, 3 model calls,
+  1 query, 6.3 s); `git status` in the clone stayed clean (state only in ignored `data/`,
+  `logs/`). Clone and its `.env` copy deleted. Not covered: a machine without this user's
+  uv cache and gcloud installation, and the GitHub URL in the README (not pushed yet).
 
 ## Cut order if over time
 1. Stage 8 retrieval falls back to TF-IDF; saved definitions shrink to conversation-only.
