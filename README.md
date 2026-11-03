@@ -5,8 +5,10 @@ plain language, get answers computed by SQL on BigQuery
 (`bigquery-public-data.thelook_ecommerce`), turn them into saved reports, and manage the
 report library — without ever seeing personal data or another brand's numbers.
 
-Built with **Google ADK** and **Gemini**. The model writes SQL; deterministic code decides
-what may run, what it can see and what may be shown.
+Built with **Google ADK** and **Gemini** (why: [ADR-0001](docs/adr/0001-agent-framework.md);
+the author has over a year of production experience with Google ADK and PydanticAI). The
+model writes SQL; deterministic code decides what may run, what it can see and what may be
+shown.
 
 | Document | What it covers |
 |---|---|
@@ -35,8 +37,11 @@ what may run, what it can see and what may be shown.
 - **Observability** — a trace per turn (`/trace`), session metrics (`/stats`), feedback.
 - **Golden knowledge** — analysts' Question → SQL → Report examples retrieved by embedding
   similarity, filtered by the user's scope.
-- **Definitions** — churn and revenue defaults stated in every answer; "use 60 days" for one
-  conversation, "always use 60 days" saved per user.
+- **Learns each user's preferences** — "I prefer bullet points, keep it brief" is saved per
+  user and shapes every later answer; business definitions likewise ("use 60 days for churn"
+  for one conversation, "always use 60 days" saved).
+- **Persona without redeploy** — the CEO changes the agent's tone from the chat with
+  `/persona set ...`; it applies from the next answer, with version history.
 
 ## Run it
 
@@ -51,6 +56,12 @@ git clone https://github.com/issuchkov/retail-text2sql.git
 
 ```bash
 cd retail-text2sql && make setup
+```
+
+Without uv, plain pip works too (Python 3.12):
+
+```bash
+pip install -r requirements.txt -r requirements-dev.txt && pip install -e .
 ```
 
 Authenticate BigQuery with Application Default Credentials and set the project that runs the
@@ -85,7 +96,7 @@ make run USER_ID=bob
 |---|---|---|
 | `alice` | Brand Manager, Calvin Klein | Calvin Klein |
 | `bob` | Denim Portfolio Manager | Levi's, Wrangler, Diesel |
-| `carol` | Chief Executive Officer | all brands |
+| `carol` | Chief Executive Officer, persona editor | all brands |
 
 `retail-agent chat --user bob --new` starts a new conversation; without `--new` the last one
 resumes.
@@ -130,6 +141,8 @@ The report "Q3 2026 brand review" has been successfully deleted from your librar
 | `/stats` | Metrics for this conversation |
 | `/feedback good\|bad [note]` | Rate the last answer |
 | `/definitions` | Business definitions in effect and their source |
+| `/preferences` | Your saved answer preferences (format, depth, charts) |
+| `/persona` | The agent's tone; persona editors: `/persona set <text>`, `/persona history` |
 | `/reports` | Your saved reports |
 | `/new`, `/help`, `/quit` | |
 
@@ -140,7 +153,8 @@ make test
 ```
 
 Offline (no network): guard, scope binding, executor, deletion flow, resilience, tracing,
-golden set, definitions, CLI — a scripted model drives the real ADK runner.
+golden set, definitions, preferences, persona, CLI — a scripted model drives the real ADK
+runner.
 
 ```bash
 make test-live
@@ -157,34 +171,38 @@ Real Gemini + BigQuery: 15 scenarios with reference SQL computed at eval time an
 red-team cases with deterministic checks; results in `evals/results/<timestamp>/`.
 
 `make lint` runs ruff. `uv run python -m retail_agent.observability.metrics` summarises
-`logs/traces.jsonl`; `uv run python scripts/build_golden_index.py` re-embeds the golden trios
-after editing them.
+`logs/traces.jsonl`; `uv run python scripts/show_conversation.py <trace_id>` prints the full
+message correspondence of a turn (the trace id is in every answer's footer);
+`uv run python scripts/build_golden_index.py` re-embeds the golden trios after editing them;
+`make requirements` regenerates the pip requirement files from `uv.lock`.
 
 ## Configuration
 
 All settings come from the environment or `.env` (see `.env.example`): model and fallback
 (`RETAIL_MODEL`, `RETAIL_FALLBACK_MODEL`), byte cap and row cap, per-turn budgets, timeouts.
-The persona is `config/persona.md`, re-read on every turn. Identities and scopes are
+The persona's shipped default is `config/persona.md`; changes made with `/persona set` go to
+`data/persona.md` (versions in `data/persona_history/`); it is re-read on every turn. Identities and scopes are
 `config/users.yaml` (production: a JWT from the frontend, see HLD).
 
-Local state is git-ignored: `data/` (sessions, reports, preferences — SQLite) and `logs/`
-(`cli.log`, `traces.jsonl`).
+Local state is git-ignored: `data/` (sessions, reports, preferences — SQLite; the runtime
+persona) and `logs/` (`cli.log`, `traces.jsonl`).
 
 ## Layout
 
 ```text
 src/retail_agent/
   query/          logical schema, SQL guard, demographics rule, scope binding, BigQuery executor
-  agent/          ADK agent, tools, instruction, redaction, resilient model, budgets, definitions
+  agent/          ADK agent, tools, instruction, redaction, grounded figures, resilient model,
+                  budgets, definitions, preferences, persona
   reports/        report store and the two-phase delete
   golden/         golden trio library and retrieval
-  observability/  trace plugin and metrics
+  observability/  trace plugin, metrics, conversation rendering
   cli/            chat session and terminal app
 golden/           trios (YAML) and the embedding index
 config/           users and persona
 evals/            scenarios, red team, harness
 tests/            unit (offline) and live (BigQuery, Gemini)
-scripts/          model probe, agent smoke run, golden index builder
+scripts/          model probe, agent smoke run, golden index builder, conversation viewer
 docs/             HLD, technical explanation, ADRs, eval results
 ```
 
@@ -193,6 +211,10 @@ docs/             HLD, technical explanation, ADRs, eval results
 - Small-group suppression (a minimum number of customers per aggregate row) is designed for
   production (BigQuery aggregation thresholds), not enforced in the prototype.
 - The golden trios are a seed set written for the prototype, not reviewed by an analyst.
-- On the Gemini free tier (15 requests/minute) turns can be slow or fall back to the second
-  model; a paid key changes only `.env`.
+- Preferences are saved when the user states them; inferring them from behaviour is designed
+  (HLD §5), not built. Charts are an extension point: a `charts` preference yields
+  chart-ready tables.
+- On the Gemini free tier (15 requests/minute for gemini-3.5-flash-lite, as reported by the
+  API's 429 response) turns can be slow or fall back to the second model; a paid key changes
+  only `.env`.
 - Authentication is a `--user` switch; charts, email and web search are extension points.

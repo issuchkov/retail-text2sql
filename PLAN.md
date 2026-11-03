@@ -27,6 +27,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 | 9 Evals | done |
 | 10 Docs (HLD, technical explanation, README) | done |
 | 11 Fresh-clone check | done |
+| 12 Requirements audit against the brief | done |
 
 ## Environment (done before this plan)
 
@@ -277,6 +278,21 @@ The client's answers (SPEC §12) change finished code. RED tests first, then cod
   `logs/`). Clone and its `.env` copy deleted. Not covered: a machine without this user's
   uv cache and gcloud installation, and the GitHub URL in the README (not pushed yet).
 
+### 12 Requirements audit against the brief (2026-11-03)
+The original brief was re-read line by line; nine gaps were found and closed (SPEC first):
+- R4 user level: answer-format preferences (`format`, `depth`, `visuals`) via
+  `remember_preference`, `/preferences` — SPEC §3.3 promised them but only definitions
+  existed. Live: Bob's "bullets, brief" shaped a new conversation's answer; Alice unaffected.
+- R7 "message correspondence": `scripts/show_conversation.py <trace_id>` renders the turn
+  from the session store (user/model messages, tool calls, results). Live on a real trace.
+- Task setup uses pip: `requirements.txt` / `requirements-dev.txt` exported from `uv.lock`
+  (`make requirements`); a pip install in a fresh venv ran the CLI and the offline tests.
+- R8 non-developers: `/persona set|history` for persona editors (CEO), runtime file
+  `data/persona.md`, history kept; others refused. Live: tone changed on the next answer.
+- Docs: requirement map, framework experience, setup and example run, R6 intent/UX/release
+  gate, extension guide (technical explanation); services and data-handling tables (HLD).
+- 340 offline tests; Mermaid diagrams re-rendered (4/4). Live test state removed afterwards.
+
 ## Cut order if over time
 1. Stage 8 retrieval falls back to TF-IDF; saved definitions shrink to conversation-only.
 2. Eval scenarios reduced to 8 + red-team 10.
@@ -347,3 +363,6 @@ resilience, tracing, golden trio format + sample set.
   was not changed.
 - 2026-11-03: The Gemini key's project moved to the paid tier (Tier 1); the key is restricted
   to the Generative Language API. Checked: both models and embeddings answer. No code change.
+- 2026-11-03: `/persona set` writes `data/persona.md` (git-ignored runtime state), not
+  `config/persona.md`, so changing the tone never dirties the repository; the config file
+  is the shipped default.
