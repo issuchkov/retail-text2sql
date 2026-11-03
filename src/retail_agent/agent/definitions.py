@@ -18,7 +18,9 @@ SESSION_KEY = "definitions"
 DEFAULTS = {
     "revenue": "sum of sale_price of items whose status is not Cancelled or Returned "
     "(orders.order_revenue is already net)",
-    "churn": "no purchase in the 90 days before the end of the period analysed",
+    "churn": "no purchase in the 90 days before the end of the period analysed; count only "
+    "customers with at least one item that was not cancelled or returned, judged by their "
+    "last such purchase",
     "quarter": "calendar quarter in UTC (months and weeks are calendar periods in UTC too)",
 }
 

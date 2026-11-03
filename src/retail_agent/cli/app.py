@@ -184,6 +184,7 @@ class App:
             ("Empty results", _pct(m["empty_result_rate"])),
             ("Guard rejections", _counts(m["guard_rejections_by_rule"])),
             ("PII redactions (turns)", m["pii_redactions"]),
+            ("Answers with unverified figures", m["ungrounded_figure_turns"]),
             ("Model calls / fallbacks", f"{m['model_calls']} / {m['model_fallbacks']}"),
             ("Model attempts", _counts(m["model_attempts_by_outcome"])),
             ("Tokens in / out", f"{m['tokens_in']} / {m['tokens_out']}"),

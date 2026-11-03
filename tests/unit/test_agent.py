@@ -252,3 +252,21 @@ async def test_delete_needs_a_selector(services: Services) -> None:
     await chat.say("delete")
     assert chat.pending is None
     assert chat.llm.function_responses()[-1]["status"] == "invalid_selector"
+
+
+async def test_invented_figures_are_flagged(services: Services) -> None:
+    chat = Chat(services, [text("Your 2025 net revenue was $144,369,637.38.")])
+    events = await chat.say("What was my 2025 revenue?")
+    answer = final_text(events)
+    assert "$144,369,637.38" in answer  # the model's text is kept ...
+    assert "Unverified figures" in answer  # ... with a visible warning
+
+
+async def test_figures_from_query_results_are_not_flagged(services: Services) -> None:
+    services.executor.rows = [{"brand": "Levi's", "net_revenue": 21603.85}]
+    chat = Chat(
+        services,
+        [call("run_query", sql="SELECT brand FROM products"), text("Levi's made $21,603.85.")],
+    )
+    events = await chat.say("Levi's revenue?")
+    assert "Unverified" not in final_text(events)

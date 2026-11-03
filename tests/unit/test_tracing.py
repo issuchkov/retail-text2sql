@@ -228,3 +228,9 @@ async def test_cli_trace_stats_and_feedback(services, writer) -> None:
     assert feedback["rating"] == "bad"
     assert feedback["trace_id"] == chat.last_turn.trace_id
     assert "415-555-0134" not in feedback["note"]
+
+
+async def test_ungrounded_figures_are_traced(services, writer) -> None:
+    chat = await chat_with(services, writer, [text("Revenue was $144,369,637.")])
+    await chat.ask("revenue?")
+    assert lines(writer)[-1]["ungrounded"] == [144369637.0]

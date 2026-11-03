@@ -1,0 +1,209 @@
+# Scenario eval (SPEC §11 AC-1, AC-11): real Gemini + BigQuery.
+# Each `reference.sql` runs at eval time as the case's user (same guard and brand scope),
+# so expected numbers follow the daily-refreshed data; nothing is hardcoded.
+# Checks apply to the last answer: `values` (numbers must appear, rounding allowed),
+# `texts` (strings from the reference must appear), `must_mention` (all, case-insensitive),
+# `must_mention_any` (at least one per group), `expect_tools`.
+
+- id: schema-coverage
+  type: schema
+  user: bob
+  turns: ["What data can I analyse, and from which year does it start?"]
+  reference:
+    sql: SELECT EXTRACT(YEAR FROM MIN(created_at)) AS first_year FROM orders
+    values: [{column: first_year, rows: [0]}]
+  must_mention_any: [["order"], ["product"], ["customer"]]
+
+- id: top-categories-q3
+  type: product
+  user: bob
+  turns: ["What were my top 3 product categories by net revenue in Q3 2026?"]
+  reference:
+    sql: |
+      SELECT p.category, ROUND(SUM(oi.sale_price), 2) AS net_revenue
+      FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+      WHERE oi.status NOT IN ('Cancelled', 'Returned')
+        AND DATE(oi.created_at) BETWEEN '2026-07-01' AND '2026-09-30'
+      GROUP BY p.category ORDER BY net_revenue DESC LIMIT 3
+    values: [{column: net_revenue, rows: [0, 1, 2]}]
+    texts: [{column: category, rows: [0, 1, 2]}]
+  expect_tools: [run_query]
+
+- id: monthly-trend
+  type: time_series
+  user: bob
+  turns: ["Show my monthly net revenue from April to September 2026."]
+  reference:
+    sql: |
+      SELECT DATE_TRUNC(DATE(created_at), MONTH) AS month, ROUND(SUM(sale_price), 2) AS net_revenue
+      FROM order_items
+      WHERE status NOT IN ('Cancelled', 'Returned')
+        AND DATE(created_at) BETWEEN '2026-04-01' AND '2026-09-30'
+      GROUP BY month ORDER BY month
+    values: [{column: net_revenue, rows: [0, 1, 2, 3, 4, 5]}]
+
+- id: top-customers
+  type: customer
+  user: bob
+  turns: ["Who were my top 3 customers by net revenue in 2025?"]
+  reference:
+    sql: |
+      SELECT customer_key, ROUND(SUM(order_revenue), 2) AS net_revenue
+      FROM orders WHERE EXTRACT(YEAR FROM created_at) = 2025
+      GROUP BY customer_key ORDER BY net_revenue DESC, customer_key LIMIT 3
+    values: [{column: net_revenue, rows: [0]}]
+    texts: [{column: customer_key, rows: [0]}]
+
+- id: brand-comparison
+  type: product_comparison
+  user: bob
+  turns: ["How does Levi's compare with Wrangler on net revenue in 2026?"]
+  reference:
+    sql: |
+      SELECT p.brand, ROUND(SUM(oi.sale_price), 2) AS net_revenue
+      FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+      WHERE oi.status NOT IN ('Cancelled', 'Returned') AND EXTRACT(YEAR FROM oi.created_at) = 2026
+        AND p.brand IN ("Levi's", 'Wrangler')
+      GROUP BY p.brand ORDER BY p.brand
+    values: [{column: net_revenue, rows: [0, 1]}]
+
+- id: churn-default
+  type: definition
+  user: bob
+  turns: ["How many of my customers have churned?"]
+  reference:
+    sql: |
+      WITH last_purchase AS (
+        SELECT customer_key, MAX(created_at) AS last_order_at FROM order_items
+        WHERE status NOT IN ('Cancelled', 'Returned') GROUP BY customer_key)
+      SELECT COUNTIF(last_order_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 90 DAY)) AS churned
+      FROM last_purchase
+    values: [{column: churned, rows: [0]}]
+  must_mention: ["90"]
+  must_mention_any: [["default"]]
+
+- id: churn-override
+  type: definition
+  user: bob
+  turns:
+    - "How many of my customers have churned?"
+    - "Use 60 days instead of 90 for churn and recompute."
+  reference:
+    sql: |
+      WITH last_purchase AS (
+        SELECT customer_key, MAX(created_at) AS last_order_at FROM order_items
+        WHERE status NOT IN ('Cancelled', 'Returned') GROUP BY customer_key)
+      SELECT COUNTIF(last_order_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 60 DAY)) AS churned
+      FROM last_purchase
+    values: [{column: churned, rows: [0]}]
+  must_mention: ["60"]
+  must_mention_any: [["this conversation"]]
+  expect_tools: [set_definition]
+
+- id: traffic-source
+  type: customer_demographics
+  user: bob
+  turns: ["Which traffic source brought me the most net revenue in 2026?"]
+  reference:
+    sql: |
+      SELECT u.traffic_source, ROUND(SUM(o.order_revenue), 2) AS net_revenue
+      FROM orders AS o JOIN users AS u USING (customer_key)
+      WHERE EXTRACT(YEAR FROM o.created_at) = 2026
+      GROUP BY u.traffic_source ORDER BY net_revenue DESC LIMIT 1
+    values: [{column: net_revenue, rows: [0]}]
+    texts: [{column: traffic_source, rows: [0]}]
+
+- id: top-states
+  type: customer_demographics
+  user: alice
+  turns: ["Which 3 states brought Calvin Klein the most net revenue in 2026?"]
+  reference:
+    sql: |
+      SELECT u.state, ROUND(SUM(o.order_revenue), 2) AS net_revenue
+      FROM orders AS o JOIN users AS u USING (customer_key)
+      WHERE EXTRACT(YEAR FROM o.created_at) = 2026
+      GROUP BY u.state ORDER BY net_revenue DESC LIMIT 3
+    values: [{column: net_revenue, rows: [0, 1, 2]}]
+    texts: [{column: state, rows: [0, 1, 2]}]
+
+- id: fastest-growing-brand
+  type: multi_step
+  user: bob
+  turns: ["Which of my brands grew net revenue the most from Q2 2026 to Q3 2026, in percent?"]
+  reference:
+    sql: |
+      WITH q AS (
+        SELECT p.brand,
+          SUM(IF(DATE(oi.created_at) BETWEEN '2026-04-01' AND '2026-06-30', oi.sale_price, 0)) AS q2,
+          SUM(IF(DATE(oi.created_at) BETWEEN '2026-07-01' AND '2026-09-30', oi.sale_price, 0)) AS q3
+        FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+        WHERE oi.status NOT IN ('Cancelled', 'Returned')
+        GROUP BY p.brand)
+      SELECT brand, ROUND(SAFE_DIVIDE(q3 - q2, q2) * 100, 1) AS growth_pct
+      FROM q ORDER BY growth_pct DESC LIMIT 1
+    values: [{column: growth_pct, rows: [0]}]
+    texts: [{column: brand, rows: [0]}]
+
+- id: department-share
+  type: product
+  user: alice
+  turns: ["What share of Calvin Klein's net revenue in 2026 came from women's versus men's?"]
+  reference:
+    sql: |
+      SELECT p.department,
+        ROUND(SAFE_DIVIDE(SUM(oi.sale_price), SUM(SUM(oi.sale_price)) OVER ()) * 100, 1) AS share_pct
+      FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+      WHERE oi.status NOT IN ('Cancelled', 'Returned') AND EXTRACT(YEAR FROM oi.created_at) = 2026
+      GROUP BY p.department ORDER BY p.department
+    values: [{column: share_pct, rows: [0, 1]}]
+
+- id: ceo-total-2025
+  type: time_series
+  user: carol
+  turns: ["What was total net revenue across all brands in 2025?"]
+  reference:
+    sql: |
+      SELECT ROUND(SUM(sale_price), 2) AS net_revenue FROM order_items
+      WHERE status NOT IN ('Cancelled', 'Returned') AND EXTRACT(YEAR FROM created_at) = 2025
+    values: [{column: net_revenue, rows: [0]}]
+
+- id: ceo-margin
+  type: product
+  user: carol
+  turns: ["Which product category had the highest gross margin rate in 2025?"]
+  reference:
+    sql: |
+      SELECT p.category,
+        ROUND(SAFE_DIVIDE(SUM(oi.sale_price - p.cost), SUM(oi.sale_price)) * 100, 1) AS margin_pct
+      FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+      WHERE oi.status NOT IN ('Cancelled', 'Returned') AND EXTRACT(YEAR FROM oi.created_at) = 2025
+      GROUP BY p.category ORDER BY margin_pct DESC LIMIT 1
+    texts: [{column: category, rows: [0]}]
+
+- id: quarter-report
+  type: report
+  user: bob
+  turns: ["Create a short report for Q3 2026 with key metrics, findings and 3 action items for Q4."]
+  reference:
+    sql: |
+      SELECT ROUND(SUM(sale_price), 2) AS net_revenue FROM order_items
+      WHERE status NOT IN ('Cancelled', 'Returned')
+        AND DATE(created_at) BETWEEN '2026-07-01' AND '2026-09-30'
+    values: [{column: net_revenue, rows: [0]}]
+  must_mention: ["action", "select"]
+  must_mention_any: [["summary"]]
+
+- id: follow-up
+  type: follow_up
+  user: bob
+  turns:
+    - "What was my net revenue by month in Q3 2026?"
+    - "And for Diesel only?"
+  reference:
+    sql: |
+      SELECT DATE_TRUNC(DATE(oi.created_at), MONTH) AS month, ROUND(SUM(oi.sale_price), 2) AS net_revenue
+      FROM order_items AS oi JOIN products AS p ON p.id = oi.product_id
+      WHERE oi.status NOT IN ('Cancelled', 'Returned') AND p.brand = 'Diesel'
+        AND DATE(oi.created_at) BETWEEN '2026-07-01' AND '2026-09-30'
+      GROUP BY month ORDER BY month
+    values: [{column: net_revenue, rows: [0, 1, 2]}]

@@ -20,7 +20,9 @@ report: |
   mistaken for a churn problem, and stays at country level.
 definitions:
 - term: churn
-  definition: no purchase in the 90 days before the end of the period analysed
+  definition: no purchase in the 90 days before the end of the period analysed; count only
+    customers with at least one item that was not cancelled or returned, judged by their last
+    such purchase
 tags:
 - churn
 - country

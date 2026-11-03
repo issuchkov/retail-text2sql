@@ -86,7 +86,7 @@ the definition in every answer that relies on it, and lets users override it.
 | Term | Default |
 |---|---|
 | Revenue | Sum of `sale_price` of items whose status is not `Cancelled` or `Returned` |
-| Churned customer | No purchase in the 90 days before the end of the period analysed |
+| Churned customer | No purchase in the 90 days before the end of the period analysed; only customers with at least one purchase that was not cancelled or returned count, judged by their last such purchase |
 | Quarter, month, week | Calendar periods in UTC |
 
 - A one-off override ("use 60 days") applies to the rest of the conversation.
@@ -163,6 +163,12 @@ answer is scanned before display for PII patterns (emails, phone numbers, street
 addresses, exact coordinates) and redacted (`[redacted]`), with the event logged. Data
 from the database is passed to the model as data, inside delimited blocks, never as
 instructions.
+
+**Grounded figures:** every amount or count of 1,000 or more in the final answer (years
+excepted) must be traceable to a query result in the conversation — a value, a column
+total, or the sum or difference of two values, allowing for rounding. Otherwise the answer
+is shown with a note that those figures are unverified, and the turn's trace records them.
+(Eval run 1 found an answer with an invented revenue figure and no query.)
 
 ## 5. Saved reports and destructive operations (R3) — required
 

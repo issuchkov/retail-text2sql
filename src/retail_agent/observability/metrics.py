@@ -75,6 +75,7 @@ def summarize(spans: list[dict[str, Any]]) -> dict[str, Any]:
             Counter(t.get("rule") for t in tools if t.get("status") == "rejected")
         ),
         "pii_redactions": sum(bool(t.get("redactions")) for t in turns),
+        "ungrounded_figure_turns": sum(bool(t.get("ungrounded")) for t in turns),
         "model_calls": len(models),
         "model_fallbacks": fallbacks,
         "model_attempts_by_outcome": dict(Counter(a.get("outcome") for a in attempts)),

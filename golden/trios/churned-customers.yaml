@@ -18,7 +18,9 @@ report: |
   long purchase cycle in apparel makes a 90-day window strict.
 definitions:
 - term: churn
-  definition: no purchase in the 90 days before the end of the period analysed
+  definition: no purchase in the 90 days before the end of the period analysed; count only
+    customers with at least one item that was not cancelled or returned, judged by their last
+    such purchase
 tags:
 - churn
 - customers

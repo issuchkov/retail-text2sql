@@ -34,6 +34,7 @@ from google.genai import types
 from retail_agent.agent.redaction import redact_value
 
 REDACTIONS_KEY = "temp:redactions"  # set by the agent's output guard
+UNGROUNDED_KEY = "temp:ungrounded"  # figures in the answer that no query produced
 QUERY_TOOLS = {"run_query", "list_column_values", "describe_data"}
 
 
@@ -88,6 +89,7 @@ class _Turn:
     bytes_processed: int = 0
     statuses: list[str] = field(default_factory=list)
     redactions: list[str] = field(default_factory=list)
+    ungrounded: list[float] = field(default_factory=list)
     model_started: float | None = None
     tool_started: dict[str, float] = field(default_factory=dict)
 
@@ -124,6 +126,7 @@ class TracePlugin(BasePlugin):
         for kind in state.get(REDACTIONS_KEY) or []:
             if kind not in turn.redactions:
                 turn.redactions.append(kind)
+        turn.ungrounded = list(state.get(UNGROUNDED_KEY) or [])
         if "awaiting_confirmation" in turn.statuses:
             status = "awaiting_confirmation"
         elif "budget_exhausted" in turn.statuses:
@@ -301,6 +304,7 @@ class TracePlugin(BasePlugin):
             "queries": turn.queries,
             "bytes_processed": turn.bytes_processed,
             "redactions": turn.redactions,
+            "ungrounded": turn.ungrounded,
         }
         if error:
             span["error"] = error
