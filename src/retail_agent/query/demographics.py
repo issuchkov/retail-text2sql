@@ -14,8 +14,10 @@ counting or summing identifiers does not expose them). The rule fails when:
 
 - the final result (or a subquery used as a value in it) outputs a demographic column at
   individual grain, or
-- the result outputs demographics and some filter pins an identifier to literal values
-  (`customer_key = 'abc'`): a "group" of named customers is not an aggregate.
+- the result outputs demographics and a row identifier is used for anything but output,
+  grouping, counting, joining on another identifier or matching an identifier subquery —
+  `customer_key = 'abc'`, `STARTS_WITH(customer_key, ...)`, `COUNTIF(customer_key = ...)`
+  all single out a customer, so a "group" built that way is not an aggregate.
 
 Anything the tracer cannot resolve counts as both demographic and identifier when `users`
 is in the query.
@@ -49,6 +51,7 @@ IDENTIFIER_COLUMNS: frozenset[Origin] = frozenset(
     }
 )
 UNKNOWN: Origin = ("?", "?")
+MIN_IDENTIFIER_SET = 5  # an identifier subquery cut below this by LIMIT singles people out
 
 # Aggregates that reduce a group to a number and so do not expose individual values.
 # ARRAY_AGG, STRING_AGG, MIN, MAX and ANY_VALUE return row values and are not listed.
@@ -75,8 +78,9 @@ _SCHEMA = {table: {c.name: c.type for c in cols} for table, cols in LOGICAL_TABL
 MESSAGE = (
     "Demographic columns (age, gender, city, state, country, traffic_source) can only be "
     "shown in aggregates: group by them and count, sum or average, with no customer_key, "
-    "order or item ids in the result. For customer-level analysis leave demographics out of "
-    "the output; filtering by them is fine."
+    "order or item ids in the result; ids may only be counted, grouped or joined on, not "
+    "compared with values or passed to functions. For customer-level analysis leave "
+    "demographics out of the output; filtering by them is fine."
 )
 
 
@@ -97,7 +101,9 @@ def exposes_individual_demographics(tree: exp.Expression, tables: set[str]) -> b
     if root is None:
         return True
     tracer = _Tracer()
-    return tracer.violates(root) or (tracer.outputs_demographics(root) and tracer.pins(root))
+    return tracer.violates(root) or (
+        tracer.outputs_demographics(root) and tracer.misuses_identifiers(root)
+    )
 
 
 class _Tracer:
@@ -124,30 +130,68 @@ class _Tracer:
             for p in leaf.expression.expressions
         )
 
-    def pins(self, root: Scope) -> bool:
-        """Does any filter compare a row identifier with literal values?"""
+    def misuses_identifiers(self, root: Scope) -> bool:
+        """Is a row identifier used in any way that could single out one customer?
+
+        Allowed: a plain identifier column that is output or grouped by (the grain rule
+        judges those), counted, compared for equality with another identifier column (a
+        join key), or matched against a subquery of identifiers. Anything else — a
+        comparison with a value, a function, a condition inside an aggregate — is a misuse.
+        """
         for scope in root.traverse():
-            select = scope.expression
-            if not isinstance(select, exp.Select):
-                continue
-            conditions = [select.args.get(k) for k in ("where", "having", "qualify")]
-            conditions += [j.args.get("on") for j in select.args.get("joins") or []]
-            for condition in filter(None, conditions):
-                for cmp in condition.find_all(exp.EQ, exp.In, exp.Like, exp.ILike):
-                    if isinstance(cmp, exp.In):
-                        sides = [(cmp.this, cmp.expressions)] if not cmp.args.get("query") else []
-                    else:
-                        sides = [(cmp.this, [cmp.expression]), (cmp.expression, [cmp.this])]
-                    for column_side, values in sides:
-                        if (
-                            values
-                            and all(_is_literal(v) for v in values)
-                            and (
-                                self.origins(column_side, scope, exposed_only=False)
-                                & IDENTIFIER_COLUMNS
-                            )
-                        ):
-                            return True
+            if self._small_identifier_set(scope):
+                return True
+            for column in scope.columns:
+                origins = self.column_origins(column, scope, exposed_only=False)
+                if origins & IDENTIFIER_COLUMNS and not self._allowed_identifier_use(column, scope):
+                    return True
+        return False
+
+    def _small_identifier_set(self, scope: Scope) -> bool:
+        """A step that outputs identifiers and is cut by LIMIT to fewer than 5 rows."""
+        select = scope.expression
+        limit = select.args.get("limit") if isinstance(select, exp.Select) else None
+        if limit is None or scope.is_root:
+            return False
+        value = limit.expression
+        if not (isinstance(value, exp.Literal) and value.is_int):
+            return True  # a computed limit cannot be checked: fail closed
+        if int(value.this) >= MIN_IDENTIFIER_SET:
+            return False
+        return any(
+            self.origins(p, scope, exposed_only=False) & IDENTIFIER_COLUMNS
+            for p in select.expressions
+        )
+
+    def _allowed_identifier_use(self, column: exp.Column, scope: Scope) -> bool:
+        node: exp.Expression = column
+        parent = node.parent
+        while isinstance(parent, exp.Paren):
+            node, parent = parent, parent.parent
+        if isinstance(parent, exp.Select):
+            return node in parent.expressions  # a bare projection
+        if isinstance(parent, exp.Alias):
+            return isinstance(parent.parent, exp.Select)  # a projection with an alias
+        if isinstance(parent, (exp.Group, exp.Ordered, exp.Count, exp.ApproxDistinct)):
+            return True
+        if isinstance(parent, exp.Distinct):
+            return isinstance(parent.parent, (exp.Count, exp.ApproxDistinct))
+        if isinstance(parent, exp.Window):
+            return node in (parent.args.get("partition_by") or [])
+        if isinstance(parent, exp.EQ):
+            other = parent.expression if parent.this is node else parent.this
+            while isinstance(other, exp.Paren):
+                other = other.this
+            return isinstance(other, exp.Column) and bool(
+                self.column_origins(other, scope, exposed_only=False) & IDENTIFIER_COLUMNS
+            )
+        if isinstance(parent, exp.In) and parent.this is node and parent.args.get("query"):
+            sub = _child_scope(scope, parent.args["query"])
+            return sub is not None and all(
+                self.origins(p, leaf, exposed_only=False) & IDENTIFIER_COLUMNS
+                for leaf in _leaf_selects(sub)
+                for p in leaf.expression.expressions
+            )
         return False
 
     def individual(self, scope: Scope) -> bool:
@@ -253,10 +297,6 @@ def _walk(node: exp.Expression, exposed_only: bool) -> Iterator[exp.Expression]:
         return
     for child in node.iter_expressions():
         yield from _walk(child, exposed_only)
-
-
-def _is_literal(node: exp.Expression) -> bool:
-    return not any(isinstance(n, (exp.Column, exp.TableColumn, exp.Select)) for n in node.walk())
 
 
 def _has_aggregate(node: exp.Expression) -> bool:

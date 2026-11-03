@@ -195,3 +195,64 @@ def test_standard_sql_quote_escaping_gets_a_bigquery_hint() -> None:
         validate("SELECT * FROM products WHERE brand = 'Levi''s'", max_rows=MAX_ROWS)
     assert err.value.rule == "syntax"
     assert '"Levi\'s"' in err.value.message
+
+
+# --- identifiers may not single out customers when demographics are output -------------
+# An independent review found these bypasses of the earlier "pinning" rule.
+
+KEY = "'3fa2b9c41d0e7a55'"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT city, age, gender, COUNT(*) AS n FROM users "
+        f"WHERE STARTS_WITH(customer_key, {KEY}) GROUP BY city, age, gender",
+        "SELECT city, COUNT(*) AS n FROM users "
+        f"WHERE customer_key IN UNNEST([{KEY}]) GROUP BY city",
+        f"SELECT city, COUNT(*) AS n FROM users WHERE customer_key BETWEEN {KEY} AND {KEY} "
+        "GROUP BY city",
+        "SELECT city, COUNT(*) AS n FROM users WHERE REGEXP_CONTAINS(customer_key, r'^3fa2') "
+        "GROUP BY city",
+        f"WITH t AS (SELECT {KEY} AS k) SELECT u.city, COUNT(*) AS n FROM users AS u "
+        "JOIN t ON u.customer_key = t.k GROUP BY 1",
+        f"SELECT city, state, COUNTIF(customer_key = {KEY}) AS hit FROM users GROUP BY 1, 2",
+        f"SELECT city, SUM(IF(customer_key = {KEY}, 1, 0)) AS hit FROM users GROUP BY 1",
+        "SELECT city, COUNT(*) AS n FROM users WHERE SUBSTR(customer_key, 1, 4) = '3fa2' "
+        "GROUP BY city",
+        f"SELECT city, COUNT(*) AS n FROM users WHERE CAST(customer_key AS STRING) = {KEY} "
+        "GROUP BY city",
+        f"SELECT city, COUNT(*) AS n FROM users WHERE customer_key > {KEY} GROUP BY city",
+        f"SELECT u.state, COUNT(*) AS n FROM users AS u WHERE u.customer_key IN "
+        f"(SELECT customer_key FROM users WHERE STARTS_WITH(customer_key, {KEY})) GROUP BY 1",
+        "SELECT u.age, COUNT(*) AS n FROM orders AS o JOIN users AS u USING (customer_key) "
+        "WHERE o.order_id BETWEEN 42 AND 42 GROUP BY 1",
+    ],
+)
+def test_rejects_identifiers_that_single_out_a_customer(sql: str) -> None:
+    with pytest.raises(QueryRejected) as err:
+        validate(sql, max_rows=MAX_ROWS)
+    assert err.value.rule == "demographics_not_aggregated"
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT city, COUNT(*) AS n FROM users WHERE customer_key IN "
+        "(SELECT customer_key FROM orders ORDER BY order_revenue DESC LIMIT 1) GROUP BY city",
+        "WITH top AS (SELECT customer_key FROM orders ORDER BY order_revenue DESC LIMIT 3) "
+        "SELECT u.city, COUNT(*) AS n FROM users AS u JOIN top USING (customer_key) GROUP BY 1",
+    ],
+)
+def test_rejects_identifier_sets_cut_below_the_minimum_group(sql: str) -> None:
+    with pytest.raises(QueryRejected) as err:
+        validate(sql, max_rows=MAX_ROWS)
+    assert err.value.rule == "demographics_not_aggregated"
+
+
+def test_identifier_sets_of_at_least_five_are_allowed() -> None:
+    validate(
+        "SELECT city, COUNT(*) AS n FROM users WHERE customer_key IN "
+        "(SELECT customer_key FROM orders ORDER BY order_revenue DESC LIMIT 100) GROUP BY city",
+        max_rows=MAX_ROWS,
+    )
