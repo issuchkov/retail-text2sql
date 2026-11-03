@@ -1,4 +1,4 @@
-.PHONY: setup test test-live lint fmt eval run
+.PHONY: setup test test-live lint fmt eval run requirements
 
 setup:
 	uv sync
@@ -22,3 +22,7 @@ eval:
 
 run:
 	uv run retail-agent chat --user $${USER_ID:-alice}
+
+requirements:
+	uv export --format requirements-txt --no-hashes --no-dev --no-emit-project -q -o requirements.txt
+	uv export --format requirements-txt --no-hashes --only-dev --no-emit-project -q -o requirements-dev.txt

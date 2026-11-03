@@ -5,6 +5,8 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 data/*.sqlite
+data/persona.md
+data/persona_history/
 data/*.sqlite-*
 logs/
 evals/results/

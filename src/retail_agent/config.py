@@ -46,6 +46,15 @@ class Settings(BaseSettings):
     data_dir: Path = Field(PROJECT_ROOT / "data", alias="RETAIL_DATA_DIR")
     log_dir: Path = Field(PROJECT_ROOT / "logs", alias="RETAIL_LOG_DIR")
 
+    @property
+    def persona_override_file(self) -> Path:
+        """Persona set from the chat (`/persona set`); `persona_file` is the shipped default."""
+        return self.data_dir / "persona.md"
+
+    @property
+    def persona_history_dir(self) -> Path:
+        return self.data_dir / "persona_history"
+
 
 class Entitlement(BaseModel):
     """Brands a user may analyse (SPEC §4.3): a brand list, or `all: true` (e.g. the CEO)."""
@@ -70,6 +79,7 @@ class UserProfile(BaseModel):
     name: str
     title: str = ""
     scope: Entitlement
+    persona_editor: bool = False  # may change the persona from the chat (SPEC §8 R8)
 
 
 def load_users(path: Path) -> dict[str, UserProfile]:

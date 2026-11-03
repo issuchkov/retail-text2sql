@@ -19,7 +19,19 @@ from retail_agent.cli.chat import ChatSession, Turn, footer
 from retail_agent.config import Settings, load_env
 from retail_agent.observability.metrics import summarize
 
-COMMANDS = {"sql", "trace", "stats", "feedback", "definitions", "reports", "new", "quit", "help"}
+COMMANDS = {
+    "sql",
+    "trace",
+    "stats",
+    "feedback",
+    "definitions",
+    "preferences",
+    "persona",
+    "reports",
+    "new",
+    "quit",
+    "help",
+}
 HELP = """Ask questions about your brands' sales, products and customers in plain language.
 
 Commands:
@@ -28,6 +40,8 @@ Commands:
   /stats    metrics for this conversation
   /feedback good|bad [note]   rate the last answer
   /definitions  business definitions in effect and where they come from
+  /preferences  how you like answers (tables, bullets, depth, charts)
+  /persona  the agent's tone; persona editors: /persona set <text>, /persona history
   /reports  list your saved reports
   /new      start a new conversation
   /help     this help
@@ -95,6 +109,10 @@ class App:
             self.show_stats()
         elif name == "feedback":
             self.record_feedback(line)
+        elif name == "preferences":
+            self.show_preferences()
+        elif name == "persona":
+            self.persona(line)
         elif name == "definitions":
             await self.show_definitions()
         elif name == "reports":
@@ -232,6 +250,49 @@ class App:
         for term, text, source in rows:
             table.add_row(term, text, source)
         self.console.print(table)
+
+    def show_preferences(self) -> None:
+        saved = self.services.preferences.all(self.chat.user_id)
+        if not saved:
+            self.console.print(
+                'No saved preferences. Tell me, e.g. "I prefer bullet points" or "keep it brief".'
+            )
+            return
+        table = Table(title="Your answer preferences")
+        table.add_column("aspect")
+        table.add_column("value")
+        for aspect, value in saved.items():
+            table.add_row(aspect, value)
+        self.console.print(table)
+
+    def persona(self, line: str) -> None:
+        store = self.services.persona
+        assert store is not None
+        _, _, rest = line.strip().partition(" ")
+        action, _, text = rest.strip().partition(" ")
+        if not action:
+            self.console.print(Markdown(store.read() or "(no persona set)"))
+            return
+        user = self.services.user(self.chat.user_id)
+        if not user.persona_editor:
+            self.console.print("Only a persona editor can change the persona.")
+            return
+        if action == "set" and text.strip():
+            store.set(text, author=user.id)
+            self.console.print("[dim]Persona updated; it applies from the next answer.[/]")
+        elif action == "history":
+            versions = store.history()
+            if not versions:
+                self.console.print("No earlier versions.")
+                return
+            table = Table(title="Replaced persona versions (newest first)")
+            for column in ("replaced at", "replaced by", "text"):
+                table.add_column(column)
+            for v in versions:
+                table.add_row(v.replaced_at, v.author, " ".join(v.text.split())[:120])
+            self.console.print(table)
+        else:
+            self.console.print("Usage: /persona | /persona set <text> | /persona history")
 
     def show_reports(self) -> None:
         reports = self.services.store.list(self.chat.user_id)

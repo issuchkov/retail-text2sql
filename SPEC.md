@@ -21,11 +21,11 @@ Two deliverables with different depth:
 | R1 Hybrid intelligence (Golden bucket) | trio format + sample set (required); lite similarity retrieval as a tool | full: storage, indexing, curation and update loop |
 | R2 Safety & PII masking | **full** | full |
 | R3 High-stakes oversight (destructive ops) | **full** | full |
-| R4 Learning loop (user + system level) | lite: per-user saved definitions and preferences | full |
+| R4 Learning loop (user + system level) | user level: saved answer-format preferences and business definitions | full (system level) |
 | R5 Resilience & graceful error handling | **full** | full |
 | R6 Quality assurance | offline eval + safety test suite | full |
 | R7 Observability | **full** | full |
-| R8 Persona management without redeploy | lite: instruction file re-read every turn | full |
+| R8 Persona management without redeploy | persona file re-read every turn; `/persona` lets a persona editor change it from the chat, versioned | full |
 
 Bold = required by the brief for the prototype; "lite" = cheap to show and makes the design
 concrete, cut first if time runs out (PLAN.md). The golden trio format and sample set are
@@ -43,7 +43,7 @@ multi-tenant deployment.
 - A user is an identity: `user_id`, display name, title, and a **brand scope** (§4.3).
   Managers manage one or more brands; the CEO (and other company-wide roles) see all.
 - Prototype: identities and scopes in `config/users.yaml`; the CLI selects one with
-  `--user <id>`.
+  `--user <id>`. `persona_editor: true` marks users allowed to change the persona (§8 R8).
 - Production: the frontend sends a JWT with the user's id and brand scopes. The API
   verifies its signature, issuer, audience and expiry against the identity provider's keys,
   and builds the same identity record from the claims (`sub` → `user_id`, a `brands` claim
@@ -74,8 +74,8 @@ multi-tenant deployment.
 - Attempts to change its instructions, reveal its prompt, or act as another user.
 
 ### 3.3 Answer contract (CLI)
-Each answer shows: the answer text (format adapted to the user's preferences: table vs
-bullets, depth), the definitions and assumptions used with their source (§3.4), and a
+Each answer shows: the answer text (format adapted to the user's saved preferences, §3.5:
+tables, bullets or prose; brief, standard or detailed), the definitions and assumptions used with their source (§3.4), and a
 footer with `trace_id` and the queries run (count, bytes processed). `/sql` shows the full
 SQL of the last turn.
 
@@ -94,6 +94,18 @@ the definition in every answer that relies on it, and lets users override it.
   user; it applies to all later conversations until changed or reset.
 - The answer names the source: "default", "this conversation" or "your saved definition".
 - Saved definitions are user preferences (R4) and never change another user's answers.
+
+### 3.5 User preferences (R4, user level)
+- Aspects and values: `format` (tables | bullets | prose), `depth` (brief | standard |
+  detailed), `visuals` (text | charts). A preference is saved per user when the user states
+  it ("I prefer bullet points", "keep it brief"), via `remember_preference`; `default`
+  removes it. Saved preferences are added to the instruction of every later turn and
+  conversation; `/preferences` shows them.
+- `visuals: charts` is recorded, but the prototype has no chart tool: answers then include a
+  chart-ready table and name the chart that fits (charts are an extension point, §10).
+- Preferences change presentation only, never scope, definitions or safety rules.
+- Learning without explicit statements (inferring depth or format from feedback and
+  follow-ups, then proposing a preference to the user) is design-only (HLD §5).
 
 ## 4. Safety and PII (R2) — required in the prototype
 
@@ -236,8 +248,14 @@ security, backups under a retention policy (HLD).
   self-correction rate, empty-result rate, guard rejections by rule, PII redactions,
   model errors/fallbacks, latency p50/p95 per turn and per step, tokens and BigQuery
   bytes per turn (cost), confirmation outcomes (confirmed/cancelled), user feedback.
+- **Deep dive:** traces say *what* happened; the full message correspondence of a turn —
+  user messages, model messages, tool calls with arguments and results, confirmations — is
+  kept in the session store, and `scripts/show_conversation.py <trace_id | session_id>`
+  prints it next to the trace. Session data holds no PII columns (they never leave
+  BigQuery) and stays local in the prototype.
 - Production: OpenTelemetry (ADK emits spans) → Cloud Trace; logs → Cloud Logging → BigQuery
-  sink; dashboards and alerts (HLD).
+  sink; dashboards and alerts (HLD); sessions in Cloud SQL with access limited to the
+  support role and a retention period.
 
 ## 8. Golden bucket, learning, QA, persona
 
@@ -260,15 +278,21 @@ security, backups under a retention policy (HLD).
     metadata filters (tags, brands); hybrid retrieval (vector + keyword); update loop:
     saved reports and positive feedback → candidate trios → analyst review → index;
     stale or failing trios retired by a nightly job that re-runs their SQL.
-- **R4 Learning loop:** user level — saved definitions (§3.4) and preferences (format,
-  depth) from explicit requests, stored per user, injected into instructions (prototype);
+- **R4 Learning loop:** user level — saved answer-format preferences (§3.5) and business
+  definitions (§3.4) from explicit requests, stored per user, injected into instructions
+  (prototype);
   system level (design) — failures, corrections and feedback mined from traces into new
   golden trios, prompt and eval updates.
 - **R6 QA:** offline eval set (questions with reference SQL run at eval time and report
   criteria), execution accuracy, LLM-as-judge rubric for intent coverage, red-team safety
   set, UX evaluation (task success, turns to answer, feedback).
-- **R8 Persona:** tone/instructions stored outside the code (prototype: a file re-read
-  every turn; production: a versioned config store with an edit UI and rollback).
+- **R8 Persona:** tone/instructions stored outside the code and re-read every turn. In the
+  prototype a persona editor (the CEO in `users.yaml`) runs `/persona` to see it and
+  `/persona set <text>` to replace it from the chat — no developer, restart or redeploy; the
+  previous version is kept in `data/persona_history/`, and `/persona history` lists the
+  versions. Persona text only sets tone: safety rules, scope and definitions are appended by
+  code after it. Production: a versioned config store with an edit UI, preview against the
+  eval suite, staged rollout and rollback.
 
 ## 9. Technology choices (detail and reasoning in the technical explanation)
 
@@ -304,6 +328,9 @@ flow of §5.3; tools are registered in one place and listed to the model per rol
 | AC-10 | Demographics never appear for individual customers, orders or items; aggregates by them work | unit tests (guard) + red-team prompts |
 | AC-11 | Answers using churn or revenue state the definition and its source; overrides apply for the conversation, saved ones in later conversations | tests with a fake model + live scenario |
 | AC-12 | Golden sample trios pass the guard and run; retrieval returns relevant examples | unit + live tests |
+| AC-13 | A stated format preference is saved per user and shapes later answers in new conversations; other users are unaffected | tests with a fake model + live scenario |
+| AC-14 | A persona editor changes the persona from the chat and the next turn uses it; other users cannot | unit tests + live run |
+| AC-15 | Given a trace id, the full correspondence of that turn can be printed | unit test + manual |
 
 ## 12. Client answers (2026-11-03)
 

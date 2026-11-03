@@ -17,5 +17,6 @@ users:
   - id: carol
     name: Carol Diaz
     title: Chief Executive Officer
+    persona_editor: true
     scope:
       all: true

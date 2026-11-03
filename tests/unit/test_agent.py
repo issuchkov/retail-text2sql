@@ -34,7 +34,9 @@ def services(persona, tmp_path) -> Services:
             id="alice", name="Alice", title="CK", scope=Entitlement(brands=["Calvin Klein"])
         ),
     }
-    settings = Settings(RETAIL_PERSONA_FILE=persona, RETAIL_PSEUDONYM_SALT="salt")
+    settings = Settings(
+        RETAIL_PERSONA_FILE=persona, RETAIL_PSEUDONYM_SALT="salt", RETAIL_DATA_DIR=tmp_path
+    )
     return Services(
         settings=settings, executor=FakeExecutor(), store=ReportStore(":memory:"), users=users
     )

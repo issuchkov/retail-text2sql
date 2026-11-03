@@ -16,7 +16,7 @@ from typing import Any
 from google.adk.tools import FunctionTool, ToolContext
 from pydantic import ValidationError
 
-from retail_agent.agent import budget, definitions
+from retail_agent.agent import budget, definitions, preferences
 from retail_agent.agent.redaction import redact, redact_value
 from retail_agent.agent.services import Services
 from retail_agent.config import UserProfile
@@ -347,6 +347,30 @@ def build_tools(services: Services) -> list[FunctionTool]:
         default = definitions.DEFAULTS.get(key)
         return {"status": "reset", "term": key, "definition": default or "no default"}
 
+    def remember_preference(aspect: str, value: str, tool_context: ToolContext) -> dict[str, Any]:
+        """Remember how this user likes answers presented, for this and later conversations.
+        Call it only when the user states a preference ("I prefer bullet points", "keep it
+        brief", "show me charts").
+
+        Args:
+            aspect: format, depth or visuals.
+            value: format: tables, bullets or prose; depth: brief, standard or detailed;
+                visuals: text or charts; "default" removes the preference.
+        """
+        user = current_user(tool_context)
+        normalized = preferences.normalize_preference(aspect, value)
+        if normalized is None:
+            return {
+                "status": "invalid",
+                "allowed": {k: list(v) for k, v in preferences.ASPECTS.items()},
+            }
+        key, cleaned = normalized
+        if cleaned == preferences.DEFAULT:
+            services.preferences.delete(user.id, key)
+            return {"status": "removed", "aspect": key}
+        services.preferences.set(user.id, key, cleaned)
+        return {"status": "saved", "aspect": key, "value": cleaned}
+
     return [
         FunctionTool(run_query),
         FunctionTool(list_column_values),
@@ -357,6 +381,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
         FunctionTool(find_similar_analyses),
         FunctionTool(set_definition),
         FunctionTool(reset_definition),
+        FunctionTool(remember_preference),
     ]
 
 
