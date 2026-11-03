@@ -63,7 +63,8 @@ multi-tenant deployment.
 - Follow-ups in the same conversation ("and for state Y?", "break it down by month").
 - Reports on request ("create a report for Q1 with insights and action items for Q2"):
   executive summary, key metrics, findings, action items, and the SQL used (as an
-  appendix). A report can be saved to the library (§5).
+  appendix). A report can be saved to the library (§5); a saved report always carries its
+  SQL — if the body has none, the server appends the turn's successful queries.
 
 ### 3.2 What it refuses (politely, with a short reason)
 - Anything that is not analysis of this data: general chat, coding help, trivia.
@@ -89,6 +90,9 @@ the definition in every answer that relies on it, and lets users override it.
 | Churned customer | No purchase in the 90 days before the end of the period analysed; only customers with at least one purchase that was not cancelled or returned count, judged by their last such purchase |
 | Quarter, month, week | Calendar periods in UTC |
 
+- The instruction names the concrete periods computed from today ("last month: 2026-10",
+  "last full quarter: Q3 2026"), so the model never has to work them out (eval run 3 caught
+  it taking September for "last month" on 3 November).
 - A one-off override ("use 60 days") applies to the rest of the conversation.
 - An explicit request to remember ("always use 60 days") saves the definition for that
   user; it applies to all later conversations until changed or reset.

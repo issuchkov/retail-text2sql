@@ -176,6 +176,15 @@ ACCEPTED_DEMOGRAPHIC_QUERIES = [
     "JOIN users AS u USING (customer_key) WHERE u.state = 'California' GROUP BY 1",
     "SELECT p.category, COUNT(*) AS items FROM order_items AS oi "
     "JOIN products AS p ON p.id = oi.product_id GROUP BY 1",
+    # eval run 3: a churn-by-traffic-source query was wrongly rejected because the month
+    # ends came from UNNEST of literals, whose origin the tracer did not know
+    "WITH month_ends AS (SELECT month_end FROM UNNEST([DATE('2026-08-31'), "
+    "DATE('2026-09-30')]) AS month_end), last_by_month AS (SELECT m.month_end, "
+    "oi.customer_key, MAX(oi.created_at) AS last_order_at FROM month_ends AS m "
+    "JOIN order_items AS oi ON DATE(oi.created_at) < m.month_end "
+    "GROUP BY m.month_end, oi.customer_key) SELECT l.month_end, u.traffic_source, "
+    "COUNT(l.customer_key) AS customers FROM last_by_month AS l "
+    "JOIN users AS u ON l.customer_key = u.customer_key GROUP BY l.month_end, u.traffic_source",
     "SELECT customer_key FROM users ORDER BY age",
     "SELECT (SELECT COUNT(*) FROM users WHERE city = 'Austin') AS n",
     "SELECT o.customer_key, SUM(o.order_revenue) AS revenue FROM orders AS o "
@@ -256,3 +265,13 @@ def test_identifier_sets_of_at_least_five_are_allowed() -> None:
         "(SELECT customer_key FROM orders ORDER BY order_revenue DESC LIMIT 100) GROUP BY city",
         max_rows=MAX_ROWS,
     )
+
+
+def test_unnest_of_an_identifier_is_still_an_identifier() -> None:
+    with pytest.raises(QueryRejected) as err:
+        validate(
+            "SELECT c, city, COUNT(*) AS n FROM users, UNNEST([customer_key]) AS c "
+            "GROUP BY c, city",
+            max_rows=MAX_ROWS,
+        )
+    assert err.value.rule == "demographics_not_aggregated"

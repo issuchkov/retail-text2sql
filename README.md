@@ -144,6 +144,7 @@ The report "Q3 2026 brand review" has been successfully deleted from your librar
 | `/preferences` | Your saved answer preferences (format, depth, charts) |
 | `/persona` | The agent's tone; persona editors: `/persona set <text>`, `/persona history` |
 | `/reports` | Your saved reports |
+| `/report <id>` | Read one of your saved reports |
 | `/new`, `/help`, `/quit` | |
 
 ## Tests and evals
@@ -167,7 +168,7 @@ retrieval.
 make eval
 ```
 
-Real Gemini + BigQuery: 15 scenarios with reference SQL computed at eval time and 15
+Real Gemini + BigQuery: 17 scenarios with reference SQL computed at eval time and 16
 red-team cases with deterministic checks; results in `evals/results/<timestamp>/`.
 
 `make lint` runs ruff. `uv run python -m retail_agent.observability.metrics` summarises

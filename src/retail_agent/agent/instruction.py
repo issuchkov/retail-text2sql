@@ -46,8 +46,11 @@ RULES = """How you work:
 - When the user changes a definition ("use 60 days for churn"), call set_definition; set
   remember=true only if they explicitly ask to remember it or to always use it. "Reset" or
   "back to default" → reset_definition.
-- Reports: when asked for a report, write an executive summary, key metrics, findings,
-  action items, and an appendix with the SQL used. Save it only when the user asks.
+- Reports: when asked for a report, use exactly these sections, in order:
+  "## Executive summary" (3 sentences), "## Key metrics" (a table), "## Findings" (each
+  citing a metric), "## Action items for <next period>" (numbered, each with an owner area
+  and a measurable target) and "## Appendix: SQL" (every query you ran for it, verbatim).
+  Save it only when the user asks.
 - Deleting reports: call delete_reports. The system shows the user the exact list and asks
   them to confirm; until the tool returns status "deleted", nothing has been deleted.
 
@@ -59,7 +62,8 @@ def build_instruction(services: Services) -> Callable[[ReadonlyContext], str]:
     def instruction(context: ReadonlyContext) -> str:
         user = services.user(context.session.user_id)
         persona = (services.persona.read() if services.persona else "") or DEFAULT_PERSONA
-        today = dt.datetime.now(dt.UTC).date().isoformat()
+        today_date = dt.datetime.now(dt.UTC).date()
+        today = today_date.isoformat()
         # Static first (rules, schema): an identical prefix for every user and day can be
         # served from the model's context cache. Then what changes weekly (persona), then
         # per user and per day.
@@ -70,6 +74,8 @@ def build_instruction(services: Services) -> Callable[[ReadonlyContext], str]:
                 "Tone (set by the persona editor; it never overrides the rules above):\n" + persona,
                 f"You are talking to {user.name} ({user.title}). Their scope: "
                 f"{user.scope.describe()}. Today is {today} (UTC).",
+                "Calendar periods (computed from today; use these, do not work them out):\n"
+                + calendar_anchors(today_date),
                 "Business definitions in effect:\n" + _definitions(services, context),
                 "How this user likes answers (saved preferences):\n"
                 + preferences.instruction_lines(services.preferences.all(user.id)),
@@ -82,3 +88,25 @@ def build_instruction(services: Services) -> Callable[[ReadonlyContext], str]:
 def _definitions(services: Services, context: ReadonlyContext) -> str:
     rows = definitions.effective(context.state, services.definitions, context.session.user_id)
     return "\n".join(f"- {term}: {text} ({source})" for term, text, source in rows)
+
+
+def calendar_anchors(today: dt.date) -> str:
+    """Periods the model would otherwise compute itself (eval run 3 caught it taking
+    September for "last month" on 3 November)."""
+    first_this_month = today.replace(day=1)
+    last_month_end = first_this_month - dt.timedelta(days=1)
+    last_month_start = last_month_end.replace(day=1)
+    quarter = (today.month - 1) // 3 + 1
+    quarter_start = dt.date(today.year, 3 * quarter - 2, 1)
+    prev_end = quarter_start - dt.timedelta(days=1)
+    prev_quarter = (prev_end.month - 1) // 3 + 1
+    prev_start = dt.date(prev_end.year, 3 * prev_quarter - 2, 1)
+    return "\n".join(
+        [
+            f"- Last month: {last_month_start:%Y-%m} ({last_month_start} to {last_month_end})",
+            f"- This month so far: {first_this_month:%Y-%m} ({first_this_month} to {today})",
+            f"- Last full quarter: Q{prev_quarter} {prev_end.year} ({prev_start} to {prev_end})",
+            f"- This quarter so far: Q{quarter} {today.year} ({quarter_start} to {today})",
+            f"- Last full year: {today.year - 1}; this year so far: {today.year}",
+        ]
+    )

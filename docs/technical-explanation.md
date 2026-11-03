@@ -13,7 +13,7 @@ Evidence for every claim below is in [PLAN.md](../PLAN.md) (stage notes) and
 | R2 Safety and PII | [R2](#r2-safety-and-pii-masking-implemented), ADR-0002, HLD §2 | `src/retail_agent/query/`, `agent/redaction.py`, `agent/grounding.py` | guard/scope/redaction tests, live scoping tests, red-team evals |
 | R3 Destructive ops | [R3](#r3-high-stakes-oversight-implemented), HLD §4 | `reports/`, `delete_reports` in `agent/tools.py`, CLI confirmation | `test_reports.py`, `test_agent.py`, `test_cli.py`, red-team evals |
 | R4 Learning loop | [R4](#r4-learning-loop-user-level-implemented-system-level-designed), HLD §5 | `agent/preferences.py`, `agent/definitions.py` | `test_preferences.py`, `test_definitions.py`, scenario evals |
-| R5 Resilience | [R5](#r5-resilience-implemented) | `agent/resilience.py`, `agent/budget.py`, `query/executor.py`, `cli/chat.py` | `test_resilience.py`, `test_executor.py`, live fault injection |
+| R5 Resilience | [R5](#r5-resilience-implemented) | `agent/resilience.py`, `agent/budget.py`, `agent/context.py`, `query/executor.py`, `cli/chat.py` | `test_resilience.py`, `test_context.py`, `test_executor.py`, `scripts/fault_injection.py` |
 | R6 QA | [R6](#r6-quality-assurance-implemented-as-suites) | `tests/`, `evals/` | [eval-results.md](eval-results.md) |
 | R7 Observability | [R7](#r7-observability-implemented) | `observability/`, `scripts/show_conversation.py` | `test_tracing.py`, `test_conversation.py` |
 | R8 Persona | [R8](#r8-persona-management-implemented) | `agent/persona.py`, `agent/instruction.py`, `/persona` | `test_persona.py` |
@@ -66,13 +66,19 @@ brand's numbers, or runs something destructive or expensive.
    added or capped at 1,000. The **demographics rule** traces every output column through
    aliases, CTEs, subqueries and unions: if a result shows age, gender, city, state, country
    or traffic source, it must be an aggregate whose keys and outputs expose no customer,
-   order or item id (including through `ARRAY_AGG`, `MIN`/`MAX`, value subqueries), and no
-   filter may pin an identifier to literal values (`WHERE customer_key = 'abc'`). A bypass
-   probe after the first green run found two holes; both are now tests. 29 rejected and 17
-   accepted cases; every accepted case also runs on BigQuery in the live suite.
+   order or item id (including through `ARRAY_AGG`, `MIN`/`MAX`, value subqueries). In such
+   a query an identifier may only be output or grouped in an inner step, counted, joined on
+   another identifier or matched against an identifier subquery; comparing it with a value
+   or passing it to a function (`=`, `BETWEEN`, `IN UNNEST`, `STARTS_WITH`, `REGEXP_CONTAINS`,
+   `COUNTIF(customer_key = …)`) is rejected, and so is an identifier subquery cut by `LIMIT`
+   below 5 rows. History: a bypass probe after the first green run found two holes, and an
+   independent review later found seven more variants of "pinning" one customer — all are
+   now tests (43 rejected and 18 accepted cases); every accepted case also runs on BigQuery
+   in the live suite. Not caught: narrowing a group by value thresholds (`revenue > X`) to a
+   handful of customers — that needs minimum group sizes (production).
 3. **Output guard.** Tool results are capped (200 rows, 20k characters) and redacted; the
    final answer and saved reports are scanned for emails, phones, coordinates and street
-   addresses. Traces store metadata only and are redacted too.
+   addresses. Traces store metadata and the redacted user message, never answers or rows.
 4. **Grounded figures.** Every amount or count of 1,000 or more in the final answer (years
    excepted) must match a query result in the conversation — a value, a column total, or
    the sum or difference of two values, within rounding. Otherwise the answer carries an
@@ -105,6 +111,9 @@ per-user byte quotas.
   previewed ids** that still exist and belong to the user (the client asked for hard
   delete), then audits the outcome. The audit log has ids and actions, never content.
 
+**Reading reports:** `get_report(id)` and `/report <id>` open one of the user's own reports
+so it can be discussed; other users' ids return "not found".
+
 **Extensibility:** any side-effecting tool (send email, share externally) uses the same
 pattern: plan → preview → client confirmation → execute exactly the plan.
 
@@ -113,9 +122,11 @@ pattern: plan → preview → client confirmation → execute exactly the plan.
 - **Model:** `ResilientLlm` wraps primary and fallback. 429 → switch model at once (separate
   quota); both limited → one wait for the advertised `RetryInfo` delay if ≤ 30 s; timeout
   (25 s) or 404 → switch; 5xx/network → one retry with backoff and jitter; circuit breaker
-  per model (3 failures → skip for 60 s); other 4xx raised. Verified live by pointing the
-  primary at a nonexistent model (fallback answered the same number) and by a 0.01 s timeout
-  (friendly message, no crash).
+  per model (3 failures → skip for 60 s); other 4xx raised. Reproducible with `scripts/fault_injection.py`: a retired primary (404) falls back to the
+  other model, a 0.01 s timeout on both ends in a friendly message, no crash. One run is
+  worth noting: on the same question the primary answered 275 orders and the fallback 214 —
+  a fallback can change answers, so the eval suite should also be run with the fallback as
+  the primary before relying on it.
 - **SQL self-correction:** guard rejections and BigQuery errors return to the model with the
   reason and how to fix it (e.g. BigQuery does not escape quotes by doubling them — a real
   failure seen in traces). At most 3 failed attempts and 8 queries per turn, 12 model calls
@@ -124,6 +135,11 @@ pattern: plan → preview → client confirmation → execute exactly the plan.
   errors classified so the model knows whether rewriting can help.
 - **CLI:** no exception escapes a turn; the user sees one line with the trace id, details go
   to `logs/cli.log`; sessions persist and resume after a restart.
+- **Long conversations:** before every model call, tool results of earlier turns are
+  compacted to their metadata (`agent/context.py`); the answers written from them stay, so
+  context and cost stay bounded. A context-too-long error tells the user to start `/new`.
+- **One deletion at a time:** a second delete request while one awaits confirmation is
+  refused with a message instead of being silently dropped.
 
 ## R7 Observability (implemented)
 
@@ -138,7 +154,8 @@ pattern: plan → preview → client confirmation → execute exactly the plan.
   (`/feedback good|bad`).
 - **It already paid off:** a trace showed the model adding a redundant brand filter written
   as `'Levi''s'`, costing a rejected query per question; one instruction line removed it.
-- **Deep dive — the message correspondence:** traces deliberately hold metadata only. The
+- **Deep dive — the message correspondence:** traces hold metadata and the redacted user
+  message, not answers or result rows. The
   conversation itself (user and model messages, every tool call with its arguments and
   result, confirmations) is in the ADK session store, and
   `uv run python scripts/show_conversation.py <trace_id>` prints the turn behind any trace
@@ -156,16 +173,21 @@ pattern: plan → preview → client confirmation → execute exactly the plan.
 
 - **Format:** one YAML file per trio: question, intent, SQL (logical names), report
   (structure and kind of insight — no figures), definitions used, tags, brands, author,
-  status (`seed`/`reviewed`), reviewed date. 23 seed trios cover every question type in the
-  brief; each passes the guard and returns rows on BigQuery (live tests).
+  status (`seed`/`reviewed`/`retired`), reviewed date. 25 seed trios cover every question
+  type in the brief, including its two "why" examples (state underspending, a churn spike);
+  each passes the guard and returns rows on BigQuery (live tests).
 - **Scope safety:** trios about specific brands are returned only to users whose scope covers
   them, and reports carry no figures (tested), so an example can never leak another brand's
   numbers.
 - **Retrieval:** `find_similar_analyses` embeds the question with `gemini-embedding-001`
   (256 dims) and ranks precomputed trio embeddings (`golden/index.json`, built by a script,
-  validated by a hash per trio); on a stale index or an embedding failure it falls back to
-  local TF-IDF. 5/5 paraphrased questions retrieved the right trio live. It is a tool rather
-  than automatic context: visible in traces, free on follow-up questions.
+  validated by a hash per trio). Only matches above a calibrated similarity are returned
+  (cosine 0.70: off-topic questions scored at most 0.671, the weakest on-topic match 0.698);
+  otherwise the tool says there is no close example. A stale index is logged and local
+  TF-IDF is used instead; so is an embedding failure. The brief's two example questions
+  retrieve their trios first (0.768, 0.86); 5/5 paraphrases retrieve the right trio live.
+  It is a tool the instruction tells the model to call first for a new question, and the
+  scenario evals check that it was called.
 - **Production:** trios in a versioned GCS bucket; Vertex AI Vector Search with metadata
   filters (brands, tags, status); hybrid vector + keyword ranking; a nightly job re-runs each
   trio's SQL and retires failing ones; new trios come from the learning loop below.
@@ -194,7 +216,8 @@ pattern: plan → preview → client confirmation → execute exactly the plan.
 ## R6 Quality assurance (implemented as suites)
 
 - **Offline, every change (`make test`):** guard, scope binding, executor, deletion flow,
-  resilience, tracing, golden format, definitions, preferences, persona, CLI — 340 tests, a
+  resilience, history compaction, tracing, golden format, definitions, preferences,
+  persona, CLI — 378 tests, a
   scripted model driving the real ADK runner.
 - **Live (`make test-live`):** scoping on real data, every query the guard accepts, every
   golden trio, embedding retrieval.
@@ -230,7 +253,8 @@ replaces it, `/persona history` lists replaced versions with who replaced them. 
 is written to `data/persona.md` (runtime state; `config/persona.md` stays the shipped
 default) and the old text to `data/persona_history/`. Other users get "only a persona
 editor can change the persona". Rules, scope, schema, definitions and preferences are
-appended by code after the persona, so a persona cannot remove a safety rule. Live: the CEO
+added by code — the rules first, the persona labelled as tone only — so a persona cannot
+remove a safety rule. Live: the CEO
 set "upbeat sports commentator" and the next answer opened with "Boom! What a year!" while
 the figure stayed exact.
 

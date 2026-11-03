@@ -174,6 +174,8 @@ def build_tools(services: Services) -> list[FunctionTool]:
             entities: Brands, categories, states and other entities the report is about.
         """
         user = current_user(tool_context)
+        if "select" not in body.lower():  # every saved report carries the SQL behind it
+            body = body.rstrip() + _sql_appendix(tool_context)
         clean_title, kinds_title = redact(title)
         clean_body, kinds_body = redact(body)
         clean_entities, kinds_entities = redact_value(list(entities or []))
@@ -421,6 +423,26 @@ def build_tools(services: Services) -> list[FunctionTool]:
         FunctionTool(reset_definition),
         FunctionTool(remember_preference),
     ]
+
+
+def _sql_appendix(tool_context: ToolContext) -> str:
+    """The successful queries of the current turn, as a report appendix."""
+    calls: dict[str, str] = {}
+    succeeded: list[str] = []
+    for event in tool_context.session.events:
+        if event.invocation_id != tool_context.invocation_id:
+            continue
+        for fc in event.get_function_calls():
+            if fc.name == "run_query":
+                calls[fc.id or ""] = str((fc.args or {}).get("sql", ""))
+        for fr in event.get_function_responses():
+            response = fr.response or {}
+            if fr.name == "run_query" and response.get("status") == "ok" and fr.id in calls:
+                succeeded.append(calls[fr.id])
+    if not succeeded:
+        return ""
+    blocks = "\n\n".join(f"```sql\n{sql.strip()}\n```" for sql in succeeded)
+    return f"\n\n## Appendix: SQL\n\n{blocks}\n"
 
 
 def _fit(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

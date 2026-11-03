@@ -352,3 +352,47 @@ async def test_instruction_starts_with_the_static_part(services: Services) -> No
     persona_at = instruction.index("concise analyst")
     user_at = instruction.index("You are talking to")
     assert rules_at < schema_at < persona_at < user_at
+
+
+async def test_instruction_names_the_calendar_periods(services: Services) -> None:
+    import datetime as dt
+
+    from retail_agent.agent.instruction import calendar_anchors
+
+    anchors = calendar_anchors(dt.date(2026, 11, 3))
+    assert "Last month: 2026-10 (2026-10-01 to 2026-10-31)" in anchors
+    assert "Last full quarter: Q3 2026 (2026-07-01 to 2026-09-30)" in anchors
+    assert "This quarter so far: Q4 2026" in anchors
+    assert "Last full year: 2025" in anchors
+    january = calendar_anchors(dt.date(2027, 1, 15))
+    assert "Last month: 2026-12 (2026-12-01 to 2026-12-31)" in january
+    assert "Last full quarter: Q4 2026 (2026-10-01 to 2026-12-31)" in january
+
+    chat = Chat(services, [text("one")])
+    await chat.say("hi")
+    assert "Last month:" in chat.llm.requests[0].config.system_instruction
+
+
+async def test_saved_reports_always_carry_their_sql(services: Services) -> None:
+    sql = "SELECT brand FROM products"
+    chat = Chat(
+        services,
+        [
+            call("run_query", sql=sql),
+            call("save_report", title="Brands", body="## Summary\nLevi's leads."),
+            text("saved"),
+        ],
+    )
+    await chat.say("make and save a report")
+    saved = chat.llm.function_responses()[-1]
+    body = services.store.get("bob", saved["report_id"]).body
+    assert "## Appendix: SQL" in body
+    assert sql in body
+
+
+async def test_reports_that_already_include_sql_are_kept_as_written(services: Services) -> None:
+    body = "## Summary\nok\n\n## Appendix: SQL\n```sql\nSELECT 1\n```"
+    chat = Chat(services, [call("save_report", title="T", body=body), text("saved")])
+    await chat.say("save")
+    saved = chat.llm.function_responses()[-1]
+    assert services.store.get("bob", saved["report_id"]).body == body

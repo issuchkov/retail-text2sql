@@ -1,12 +1,13 @@
 # PLAN — Retail Data Analysis Chat Agent
 
-Resume point after context loss. Read `SPEC.md` first; this file says what is done, what
-is next, and what counts as evidence.
+How the prototype was built: stages in order, what each delivered, the evidence that it
+works, and the decisions made on the way (the log at the end). `SPEC.md` is the contract;
+this file is the record of building it.
 
 Process: spec → plan → tests first for non-LLM logic → code. Tests for the query layer,
 report store, guards and CLI plumbing run offline with fakes (`make test`); fake-model
 results are not evidence of answer quality, only `make eval` against Gemini + BigQuery is.
-No commits until the author says so.
+Every stage was committed separately once its tests passed.
 
 Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is at the end.
 
@@ -31,9 +32,7 @@ Time budget: 6–12 h total. Estimates below add up to ~10 h; the cut order is a
 
 ## Environment (done before this plan)
 
-- Personal gcloud config isolated in `~/.config/gcloud-personal` (`CLOUDSDK_CONFIG`); the
-  work config is not touched.
-- GCP project `retail-text2sql`, BigQuery API enabled, ADC quota project set. Verified:
+- A GCP project with the BigQuery API enabled and Application Default Credentials. Verified:
   dry runs and real queries from this project against `bigquery-public-data.thelook_ecommerce`,
   schemas of all four tables.
 - Data facts used in tests and evals: orders 124,916; order_items 180,946; products 29,120;
@@ -366,3 +365,12 @@ resilience, tracing, golden trio format + sample set.
 - 2026-11-03: `/persona set` writes `data/persona.md` (git-ignored runtime state), not
   `config/persona.md`, so changing the tone never dirties the repository; the config file
   is the shipped default.
+
+### 13 Independent review fixes (2026-11-03)
+An assessor agent with only the brief and the repository reviewed the submission. Verified
+and fixed: seven identifier-pinning bypasses of the demographics rule (plus a LIMIT-1 one
+found while re-probing), unreadable saved reports (`get_report`, `/report`), a second delete
+silently dropped, `WITH RECURSIVE` lost, misleading `truncated`, unbounded history, weak turn
+status, golden retrieval without a threshold, no "why" evals, docs claims beyond the code,
+HLD gaps (production data path, operations, security). Evals runs 3–4 found four more
+issues (see docs/eval-results.md), all fixed. 384 offline tests, 53 live.

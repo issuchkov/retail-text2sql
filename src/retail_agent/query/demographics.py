@@ -239,6 +239,10 @@ class _Tracer:
                 for p in select.expressions:
                     if p.alias_or_name.lower() == name and isinstance(p, exp.Alias):
                         return self.origins(p.this, scope, exposed_only=exposed_only)
+            if not self._is_source_name(name, scope):
+                unnested = self._unnest_origins(scope, exposed_only)
+                if unnested is not None:
+                    return unnested
             return self.whole_row_origins(name, scope, exposed_only)
         current: Scope | None = scope
         while current is not None:  # correlated references resolve in an outer scope
@@ -246,9 +250,33 @@ class _Tracer:
                 source = current.selected_sources[column.table][1]
                 if isinstance(source, exp.Table):
                     return {(source.name.lower(), name)}
+                if isinstance(source.expression, exp.Unnest):
+                    return self._columns_in(source.expression, current, exposed_only)
                 return self.projection_origins(source, name, exposed_only)
             current = current.parent
         return {UNKNOWN}
+
+    def _is_source_name(self, name: str, scope: Scope) -> bool:
+        current: Scope | None = scope
+        while current is not None:
+            if name in current.selected_sources:
+                return True
+            current = current.parent
+        return False
+
+    def _unnest_origins(self, scope: Scope, exposed_only: bool) -> set[Origin] | None:
+        """Origins of a value produced by UNNEST in this scope: those of the columns inside
+        it — none for an array of literals (`UNNEST([DATE '2026-08-31', ...])`)."""
+        for _, source in scope.selected_sources.values():
+            if isinstance(source, Scope) and isinstance(source.expression, exp.Unnest):
+                return self._columns_in(source.expression, scope, exposed_only)
+        return None
+
+    def _columns_in(self, node: exp.Expression, scope: Scope, exposed_only: bool) -> set[Origin]:
+        found: set[Origin] = set()
+        for column in node.find_all(exp.Column):
+            found |= self.column_origins(column, scope, exposed_only=exposed_only)
+        return found
 
     def whole_row_origins(self, name: str, scope: Scope, exposed_only: bool) -> set[Origin]:
         current: Scope | None = scope
