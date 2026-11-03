@@ -49,3 +49,10 @@ the boundaries as literals in one query.
 - 500 requests/day bounds evals: a run of ~15 scenarios × 3–6 calls is 50–90 requests, so
   evals run once per change, not in loops.
 - The probe is a smoke test (8 calls), not an eval: answer quality is measured in stage 9.
+
+## Update 2026-11-03: paid tier
+
+The project of the API key was moved to the paid tier (Tier 1) after the evals. Nothing in
+the code changed: same models, fallback and per-turn budgets. Checked with the paid key:
+both models and `gemini-embedding-001` answer (about 1 s per call). Tier 1 rate limits were
+not measured; the free-tier numbers above remain the evidence for the eval runs.

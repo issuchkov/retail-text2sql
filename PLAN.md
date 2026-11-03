@@ -345,3 +345,5 @@ resilience, tracing, golden trio format + sample set.
   definition was ambiguous, so SPEC §3.4, the default and the golden trios now say that only
   customers with at least one non-cancelled, non-returned item count. The eval expectation
   was not changed.
+- 2026-11-03: The Gemini key's project moved to the paid tier (Tier 1); the key is restricted
+  to the Generative Language API. Checked: both models and embeddings answer. No code change.
