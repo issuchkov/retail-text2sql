@@ -1,0 +1,48 @@
+id: churn-trend-monthly
+question: Why did our churn rate spike last month?
+intent: Churn rate at each of the last 12 month ends (customers whose last purchase was more
+  than 90 days before the month end), to see when it rose; then split the rise by segment.
+sql: |
+  WITH purchases AS (
+    SELECT customer_key, created_at
+    FROM order_items
+    WHERE status NOT IN ('Cancelled', 'Returned')
+  ),
+  month_ends AS (
+    SELECT month_end
+    FROM UNNEST(GENERATE_DATE_ARRAY(
+      DATE_SUB(DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 12 MONTH),
+      DATE_TRUNC(CURRENT_DATE(), MONTH), INTERVAL 1 MONTH)) AS month_end
+  ),
+  last_by_month AS (
+    SELECT m.month_end, p.customer_key, MAX(p.created_at) AS last_order_at
+    FROM month_ends AS m
+    JOIN purchases AS p ON DATE(p.created_at) < m.month_end
+    GROUP BY m.month_end, p.customer_key
+  )
+  SELECT month_end, COUNT(*) AS customers,
+    COUNTIF(DATE(last_order_at) < DATE_SUB(month_end, INTERVAL 90 DAY)) AS churned,
+    ROUND(SAFE_DIVIDE(COUNTIF(DATE(last_order_at) < DATE_SUB(month_end, INTERVAL 90 DAY)),
+                      COUNT(*)) * 100, 1) AS churn_rate_pct
+  FROM last_by_month
+  GROUP BY month_end
+  ORDER BY month_end
+report: |
+  Shows the churn rate month by month, names the month where it jumped and how it compares
+  with the months before, notes that churn lags a drop in purchases by the 90-day window,
+  then splits the jump by traffic source or category to find the segment behind it.
+definitions:
+- term: churn
+  definition: no purchase in the 90 days before the end of the period analysed; count only
+    customers with at least one item that was not cancelled or returned, judged by their last
+    such purchase
+tags:
+- churn
+- trend
+- month
+- spike
+- retention
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

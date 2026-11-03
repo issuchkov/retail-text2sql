@@ -11,6 +11,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 
 from retail_agent.agent import budget
+from retail_agent.agent.context import compact_before_model
 from retail_agent.agent.grounding import grounding_numbers, ungrounded_figures
 from retail_agent.agent.instruction import build_instruction
 from retail_agent.agent.redaction import redact
@@ -121,7 +122,7 @@ def build_agent(services: Services, model: str | BaseLlm | None = None) -> LlmAg
         model=model or resilient_model(services),
         instruction=build_instruction(services),
         tools=build_tools(services),
-        before_model_callback=model_budget(services),
+        before_model_callback=[model_budget(services), compact_before_model],
         after_model_callback=guard_model_output,
         generate_content_config=types.GenerateContentConfig(temperature=0.2),
     )

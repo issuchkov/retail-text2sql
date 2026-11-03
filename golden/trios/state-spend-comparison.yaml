@@ -1,0 +1,35 @@
+id: state-spend-comparison
+question: Why are the users in one state underspending compared to users in another state?
+intent: Compare spend per customer, orders per customer and average order value between two
+  states, then look at which categories drive the gap.
+sql: |
+  SELECT u.state,
+    COUNT(DISTINCT u.customer_key) AS customers,
+    ROUND(SUM(o.order_revenue), 2) AS net_revenue,
+    ROUND(SAFE_DIVIDE(SUM(o.order_revenue), COUNT(DISTINCT u.customer_key)), 2)
+      AS revenue_per_customer,
+    ROUND(SAFE_DIVIDE(COUNT(DISTINCT o.order_id), COUNT(DISTINCT u.customer_key)), 2)
+      AS orders_per_customer,
+    ROUND(SAFE_DIVIDE(SUM(o.order_revenue), COUNT(DISTINCT o.order_id)), 2) AS avg_order_value
+  FROM orders AS o
+  JOIN users AS u USING (customer_key)
+  WHERE u.state IN ('Texas', 'California')
+  GROUP BY u.state
+report: |
+  Splits the spending gap into reach (customers), frequency (orders per customer) and basket
+  size (average order value), names which of the three explains most of it, then checks
+  which categories differ most in the weaker state before suggesting actions.
+definitions:
+- term: revenue
+  definition: sum of sale_price of items whose status is not Cancelled or Returned
+tags:
+- state
+- geography
+- spend
+- underspending
+- comparison
+- customers
+brands: []
+author: seed set (written for the prototype)
+status: seed
+reviewed_at: null

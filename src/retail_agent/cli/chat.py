@@ -102,7 +102,7 @@ class ChatSession:
         app = App(
             name=APP_NAME,
             root_agent=build_agent(services, model=model),
-            plugins=[TracePlugin(tracer)],
+            plugins=[TracePlugin(tracer, persona_version=_persona_version(services))],
         )
         runner = Runner(app=app, session_service=sessions)
         existing = []
@@ -207,6 +207,20 @@ def _collect(event, turn: Turn) -> None:
 def _friendly(error: Exception) -> str:
     if isinstance(error, genai_errors.ClientError) and getattr(error, "code", None) == 429:
         return "The model is rate-limited right now. Wait a minute and try again."
+    if isinstance(error, genai_errors.ClientError) and _too_long(error):
+        return "This conversation has grown too long for the model. Start a new one with /new."
     if isinstance(error, (genai_errors.ServerError, ModelUnavailable)):
         return "The model service is unavailable right now. Try again shortly."
     return "Something went wrong while answering. Please try again."
+
+
+def _too_long(error: genai_errors.ClientError) -> bool:
+    text = str(error).lower()
+    return error.code == 400 and "token" in text and ("exceed" in text or "too long" in text)
+
+
+def _persona_version(services: Services):
+    def version() -> str:
+        return services.persona.version() if services.persona else ""
+
+    return version

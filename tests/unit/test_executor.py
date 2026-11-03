@@ -23,10 +23,14 @@ QUERY = PreparedQuery(
 
 class FakeJob:
     def __init__(self, rows=(), bytes_processed=1_000, error=None):
+        self.cancelled = False
         self._rows = list(rows)
         self.total_bytes_processed = bytes_processed
         self.total_bytes_billed = bytes_processed
         self._error = error
+
+    def cancel(self):
+        self.cancelled = True
 
     def result(self, timeout=None, max_results=None):
         if self._error:
@@ -82,7 +86,7 @@ def test_dry_run_then_run_with_parameters_and_cap() -> None:
     assert result.rows == [{"x": 1}, {"x": 2}]
     assert result.columns == ["x"]
     assert result.bytes_processed == 500
-    assert not result.truncated
+    assert not result.row_limit_reached
     (_, dry_cfg), (_, run_cfg) = client.calls
     assert dry_cfg.dry_run and not dry_cfg.use_query_cache
     assert not run_cfg.dry_run
@@ -188,7 +192,7 @@ def test_values_are_json_friendly_and_truncation_flagged() -> None:
         "day": "2026-01-02",
         "n": 3,
     }
-    assert result.truncated
+    assert result.row_limit_reached
 
 
 def test_empty_result_is_not_an_error() -> None:
@@ -196,3 +200,11 @@ def test_empty_result_is_not_an_error() -> None:
     result = ex.run(QUERY, max_rows=10)
     assert result.rows == []
     assert result.row_count == 0
+
+
+def test_a_job_that_fails_while_waiting_is_cancelled_before_the_retry() -> None:
+    stuck = FakeJob(error=gexc.DeadlineExceeded("timed out"))
+    client = FakeClient([FakeJob(bytes_processed=10), stuck, FakeJob([row(x=1)], 10)])
+    ex, _ = make(client)
+    assert ex.run(QUERY, max_rows=10).rows == [{"x": 1}]
+    assert stuck.cancelled  # not left running (and billed) in BigQuery

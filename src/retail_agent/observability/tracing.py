@@ -2,7 +2,8 @@
 
 `TracePlugin` is an ADK plugin: it sees every user message, model call and tool call of
 an invocation and writes one span per step plus a `turn` summary, all keyed by the
-invocation id (the trace id shown in the CLI). Spans carry metadata only — model names,
+invocation id (the trace id shown in the CLI). Spans carry metadata plus the redacted user
+message — model names,
 tokens, latency, SQL, guard decisions, row counts, bytes — never answer text or result
 rows; every string is passed through the PII redactor before it is written.
 
@@ -86,7 +87,10 @@ class _Turn:
     tokens_in: int = 0
     tokens_out: int = 0
     queries: int = 0
+    query_attempts: int = 0
+    query_ok: bool = False
     bytes_processed: int = 0
+    bytes_billed: int = 0
     statuses: list[str] = field(default_factory=list)
     redactions: list[str] = field(default_factory=list)
     ungrounded: list[float] = field(default_factory=list)
@@ -95,10 +99,16 @@ class _Turn:
 
 
 class TracePlugin(BasePlugin):
-    def __init__(self, writer: TraceWriter, clock: Callable[[], float] = time.monotonic) -> None:
+    def __init__(
+        self,
+        writer: TraceWriter,
+        clock: Callable[[], float] = time.monotonic,
+        persona_version: Callable[[], str] | None = None,
+    ) -> None:
         super().__init__(name="tracing")
         self._writer = writer
         self._clock = clock
+        self._persona_version = persona_version
         self._turns: dict[str, _Turn] = {}
 
     # --- turn ---------------------------------------------------------------------------
@@ -127,13 +137,7 @@ class TracePlugin(BasePlugin):
             if kind not in turn.redactions:
                 turn.redactions.append(kind)
         turn.ungrounded = list(state.get(UNGROUNDED_KEY) or [])
-        if "awaiting_confirmation" in turn.statuses:
-            status = "awaiting_confirmation"
-        elif "budget_exhausted" in turn.statuses:
-            status = "budget_exhausted"
-        else:
-            status = "ok"
-        self._finish(turn, status)
+        self._finish(turn, _status(turn))
 
     async def on_run_error_callback(
         self, *, invocation_context: InvocationContext, error: Exception
@@ -232,9 +236,13 @@ class TracePlugin(BasePlugin):
         }
         if isinstance(result, dict):
             span.update(_result_summary(result))
+            if tool.name in QUERY_TOOLS:
+                turn.query_attempts += 1
+                turn.query_ok = turn.query_ok or status == "ok"
             if tool.name in QUERY_TOOLS and (status == "ok" or "kind" in result):
                 turn.queries += 1
                 turn.bytes_processed += int(result.get("bytes_processed") or 0)
+                turn.bytes_billed += int(result.get("bytes_billed") or 0)
             for kind in result.get("redacted") or []:
                 if kind not in turn.redactions:
                     turn.redactions.append(kind)
@@ -303,15 +311,33 @@ class TracePlugin(BasePlugin):
             "tokens_out": turn.tokens_out,
             "queries": turn.queries,
             "bytes_processed": turn.bytes_processed,
+            "bytes_billed": turn.bytes_billed,
             "redactions": turn.redactions,
             "ungrounded": turn.ungrounded,
         }
+        if self._persona_version is not None:
+            span["persona_version"] = self._persona_version()
         if error:
             span["error"] = error
         self._emit(turn, span)
 
     def _since(self, started: float | None) -> int | None:
         return None if started is None else int((self._clock() - started) * 1000)
+
+
+def _status(turn: _Turn) -> str:
+    """What the turn amounted to (SPEC §7 turn status), most specific first."""
+    if "awaiting_confirmation" in turn.statuses:
+        return "awaiting_confirmation"
+    if "budget_exhausted" in turn.statuses:
+        return "budget_exhausted"
+    if turn.ungrounded:
+        return "unverified_figures"
+    if turn.query_ok:
+        return "answered"
+    if turn.query_attempts:
+        return "queries_failed"
+    return "no_query"
 
 
 def write_failed_turn(
@@ -351,7 +377,15 @@ def _args_summary(tool: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _result_summary(result: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {}
-    for key in ("rule", "row_count", "bytes_processed", "truncated", "count", "matched"):
+    for key in (
+        "rule",
+        "row_count",
+        "bytes_processed",
+        "bytes_billed",
+        "row_limit_reached",
+        "count",
+        "matched",
+    ):
         if key in result:
             summary[key] = result[key]
     if "kind" in result:

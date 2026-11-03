@@ -147,3 +147,45 @@ async def test_tool_returns_in_scope_examples(services) -> None:
     assert "brand-comparison-levis-wrangler" not in ids  # the test user only has Levi's
     assert all({"question", "sql", "report", "definitions"} <= set(e) for e in response["examples"])
     assert "not answers" in response["note"]
+
+
+def test_off_topic_questions_get_no_examples() -> None:
+    library = GoldenLibrary(TRIOS, index=None, embedder=None)
+    assert library.search("What is the weather in Paris?", CEO).hits == []
+
+
+def test_embedding_matches_below_the_threshold_are_dropped() -> None:
+    embedder = KeywordEmbedder()
+    index = build_index(TRIOS, embedder, model="fake", dims=7)
+    library = GoldenLibrary(TRIOS, index=index, embedder=embedder, model="fake")
+    result = library.search("Tell me a joke", CEO)  # no keyword: zero similarity
+    assert result.method == "embedding"
+    assert result.hits == []
+
+
+def test_retired_trios_are_never_returned() -> None:
+    retired = TRIOS[0].model_copy(update={"status": "retired"})
+    library = GoldenLibrary([retired, *TRIOS[1:]], index=None, embedder=None)
+    hits = library.search(retired.question, CEO, k=5).hits
+    assert retired.id not in [t.id for t, _ in hits]
+
+
+def test_stale_index_is_logged(caplog) -> None:
+    index = build_index(TRIOS, KeywordEmbedder(), model="fake", dims=7)
+    index["entries"][TRIOS[0].id]["text_hash"] = "changed"
+    library = GoldenLibrary(TRIOS, index=index, embedder=KeywordEmbedder(), model="fake")
+    with caplog.at_level("WARNING", logger="retail_agent.golden"):
+        library.search("churn", CEO)
+    assert "stale" in caplog.text
+
+
+def test_brief_examples_have_close_trios() -> None:
+    library = GoldenLibrary(TRIOS, index=None, embedder=None)
+    by_question = {
+        "Why are the users in Texas underspending compared to users in California?": (
+            "state-spend-comparison"
+        ),
+        "Why did our churn rate spike last month?": "churn-trend-monthly",
+    }
+    for question, expected in by_question.items():
+        assert expected in [t.id for t, _ in library.search(question, CEO, k=3).hits]

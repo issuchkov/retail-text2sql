@@ -31,6 +31,11 @@ log = logging.getLogger("retail_agent.golden")
 
 EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMS = 256
+# Minimum similarity for an example to be returned. Calibrated on gemini-embedding-001:
+# off-topic questions scored at most 0.671 against the trios, the weakest on-topic match
+# 0.698; lexical TF-IDF scored 0.0 for every off-topic question.
+MIN_EMBEDDING_SIMILARITY = 0.70
+MIN_LEXICAL_SIMILARITY = 0.10
 _STOPWORDS = frozenset(
     {
         "a",
@@ -192,21 +197,31 @@ class GoldenLibrary:
         )
 
     def search(self, question: str, scope: Entitlement, k: int = 3) -> SearchResult:
-        allowed = [i for i, t in enumerate(self.trios) if visible_to(t, scope)]
-        if self._embedder is not None and self.index_is_fresh():
-            try:
-                (query,) = self._embedder.embed([question], "RETRIEVAL_QUERY")
-                entries = self._index["entries"]  # type: ignore[index]
-                scores = {i: _cosine(query, entries[self.trios[i].id]["vector"]) for i in allowed}
-                return SearchResult("embedding", self._top(scores, k))
-            except Exception:
-                log.warning("embedding search failed; using lexical ranking", exc_info=True)
+        allowed = [
+            i for i, t in enumerate(self.trios) if t.status != "retired" and visible_to(t, scope)
+        ]
+        if self._embedder is not None:
+            if self.index_is_fresh():
+                try:
+                    (query,) = self._embedder.embed([question], "RETRIEVAL_QUERY")
+                    entries = self._index["entries"]  # type: ignore[index]
+                    scores = {
+                        i: _cosine(query, entries[self.trios[i].id]["vector"]) for i in allowed
+                    }
+                    return SearchResult("embedding", self._top(scores, k, MIN_EMBEDDING_SIMILARITY))
+                except Exception:
+                    log.warning("embedding search failed; using lexical ranking", exc_info=True)
+            else:
+                log.warning(
+                    "golden index is stale or built with another model; using lexical ranking "
+                    "(run scripts/build_golden_index.py)"
+                )
         scores = {i: s for i, s in self._lexical.scores(question).items() if i in allowed}
-        return SearchResult("lexical", self._top(scores, k))
+        return SearchResult("lexical", self._top(scores, k, MIN_LEXICAL_SIMILARITY))
 
-    def _top(self, scores: dict[int, float], k: int) -> list[tuple[Trio, float]]:
+    def _top(self, scores: dict[int, float], k: int, minimum: float) -> list[tuple[Trio, float]]:
         ranked = sorted(scores.items(), key=lambda item: item[1], reverse=True)
-        return [(self.trios[i], score) for i, score in ranked[:k] if score > 0]
+        return [(self.trios[i], score) for i, score in ranked[:k] if score >= minimum]
 
 
 class _Tfidf:

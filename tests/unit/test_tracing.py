@@ -58,8 +58,10 @@ async def test_a_turn_is_traced_end_to_end(services, writer) -> None:
     assert tool["bytes_processed"] == 1_000_000
     assert tool["row_count"] == 1
     summary = spans[-1]
-    assert summary["status"] == "ok"
+    assert summary["status"] == "answered"
     assert summary["user_id"] == "bob"
+    assert summary["persona_version"]  # which persona produced this answer
+    assert tool["bytes_billed"] == 10_000_000
     assert summary["model_calls"] == 2
     assert summary["queries"] == 1
     assert summary["bytes_processed"] == 1_000_000
@@ -124,7 +126,7 @@ async def test_delete_confirmation_is_traced(services, writer) -> None:
     tools = [s for s in spans if s["kind"] == "tool_call"]
     assert [t["status"] for t in tools] == ["awaiting_confirmation", "deleted"]
     turns = [s for s in spans if s["kind"] == "turn"]
-    assert [t["status"] for t in turns] == ["awaiting_confirmation", "ok"]
+    assert [t["status"] for t in turns] == ["awaiting_confirmation", "no_query"]
     assert "secret body" not in writer.path.read_text()
 
 
@@ -153,7 +155,7 @@ def test_summarize_computes_spec_metrics() -> None:
         {
             "kind": "turn",
             "trace_id": "a",
-            "status": "ok",
+            "status": "answered",
             "duration_ms": 1000,
             "bytes_processed": 10_000_000,
             "redactions": [],
@@ -175,7 +177,7 @@ def test_summarize_computes_spec_metrics() -> None:
         {
             "kind": "turn",
             "trace_id": "b",
-            "status": "ok",
+            "status": "answered",
             "duration_ms": 3000,
             "bytes_processed": 5_000_000,
             "redactions": ["email"],
@@ -190,12 +192,17 @@ def test_summarize_computes_spec_metrics() -> None:
             "redactions": [],
             "error": "ModelUnavailable",
         },
+        {"kind": "turn", "trace_id": "d", "status": "no_query", "duration_ms": 900},
+        {"kind": "turn", "trace_id": "e", "status": "queries_failed", "duration_ms": 900},
         {"kind": "feedback", "trace_id": "a", "rating": "good"},
         {"kind": "feedback", "trace_id": "b", "rating": "bad"},
     ]
     m = summarize(spans)
-    assert m["turns"] == 3
-    assert m["turn_success_rate"] == pytest.approx(2 / 3)
+    assert m["turns"] == 5
+    assert m["turns_by_status"] == {"answered": 2, "error": 1, "no_query": 1, "queries_failed": 1}
+    # answered among turns that tried to answer with data (no_query excluded)
+    assert m["data_answer_success_rate"] == pytest.approx(2 / 4)
+    assert m["no_query_share"] == pytest.approx(1 / 5)
     assert m["errors_by_type"] == {"ModelUnavailable": 1}
     assert m["sql_first_try_success_rate"] == pytest.approx(1 / 2)
     assert m["self_correction_rate"] == pytest.approx(1.0)  # of turns whose first try failed
@@ -205,8 +212,8 @@ def test_summarize_computes_spec_metrics() -> None:
     assert m["model_fallbacks"] == 1
     assert m["model_attempts_by_outcome"] == {"ok": 2, "rate_limited": 1}
     assert m["tokens_in"] == 3000
-    assert m["bytes_per_turn_avg"] == pytest.approx(5_000_000)
-    assert m["turn_latency_ms"]["p50"] == 1000
+    assert m["bytes_per_turn_avg"] == pytest.approx(15_000_000 / 5)
+    assert m["turn_latency_ms"]["p50"] == 900
     assert m["feedback"] == {"good": 1, "bad": 1}
 
 
@@ -234,3 +241,21 @@ async def test_ungrounded_figures_are_traced(services, writer) -> None:
     chat = await chat_with(services, writer, [text("Revenue was $144,369,637.")])
     await chat.ask("revenue?")
     assert lines(writer)[-1]["ungrounded"] == [144369637.0]
+
+
+async def test_turn_status_reflects_what_happened(services, writer) -> None:
+    chat = await chat_with(
+        services,
+        writer,
+        [
+            call("run_query", sql="SELECT email FROM users"),
+            text("I could not get that."),
+            text("Revenue was $144,369,637."),
+            text("Hello! Ask me about your sales."),
+        ],
+    )
+    await chat.ask("emails")
+    await chat.ask("revenue?")
+    await chat.ask("hi")
+    turns = [s for s in lines(writer) if s["kind"] == "turn"]
+    assert [t["status"] for t in turns] == ["queries_failed", "unverified_figures", "no_query"]

@@ -78,7 +78,7 @@ class FakeExecutor:
             sql=query.sql,
             columns=list(rows[0]) if rows else [],
             rows=rows,
-            truncated=len(rows) >= max_rows,
+            row_limit_reached=len(rows) >= max_rows,
             bytes_processed=1_000_000,
             bytes_billed=10_000_000,
             duration_ms=5,

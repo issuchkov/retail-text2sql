@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from retail_agent.agent.grounding import extract_numbers
 from retail_agent.agent.redaction import PATTERNS
 
@@ -22,3 +24,21 @@ def contains_text(text: str, needle: str) -> bool:
 
 def pii_findings(text: str) -> list[str]:
     return [kind for kind, pattern in PATTERNS.items() if pattern.search(text)]
+
+
+_HEADING = re.compile(r"^\s*(#{1,6}\s+.*|\*\*[^*]+\*\*:?\s*)$")
+_ITEM = re.compile(r"^\s*(?:[-*\u2022]|\d+[.)])\s+\S")
+
+
+def count_action_items(text: str) -> int:
+    """Bullets or numbered lines under the first heading that mentions actions."""
+    count, inside = 0, False
+    for line in text.splitlines():
+        if _HEADING.match(line):
+            if inside:
+                break
+            inside = "action" in line.lower()
+            continue
+        if inside and _ITEM.match(line):
+            count += 1
+    return count

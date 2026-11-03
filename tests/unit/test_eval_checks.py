@@ -50,3 +50,21 @@ def test_contains_text_normalizes_case_and_quotes() -> None:
 def test_pii_findings() -> None:
     assert pii_findings("mail jane@corp.com or 415-555-0134") == ["email", "phone"]
     assert pii_findings("Revenue $1,234 in 2026-07") == []
+
+
+def test_count_action_items_under_an_action_heading() -> None:
+    from evals.checks import count_action_items
+
+    report = """## Executive summary
+Revenue grew.
+
+## Action items for Q4
+1. Expand Diesel denim stock (merchandising) — target +10% units.
+2. Cut Wrangler returns (quality) to under 8%.
+- Launch a Levi's loyalty push (CRM) for repeat buyers.
+
+## Appendix: SQL
+SELECT 1"""
+    assert count_action_items(report) == 3
+    assert count_action_items("No headings here.\n- a bullet") == 0
+    assert count_action_items("**Action items:**\n- one\n- two") == 2

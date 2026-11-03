@@ -90,7 +90,11 @@ def bind(query: ValidatedQuery, scope: Entitlement, *, dataset: str, salt: str) 
         exp.CTE(this=sqlglot.parse_one(body, read=DIALECT), alias=exp.TableAlias(this=name))
         for name, body in ctes
     ]
-    tree.set("with_", exp.With(expressions=scoped + (own.expressions if own else [])))
+    recursive = bool(own and own.args.get("recursive"))
+    tree.set(
+        "with_",
+        exp.With(expressions=scoped + (own.expressions if own else []), recursive=recursive),
+    )
     return PreparedQuery(sql=tree.sql(dialect=DIALECT), params=params, tables=set(query.tables))
 
 

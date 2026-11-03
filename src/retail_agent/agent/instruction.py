@@ -60,16 +60,19 @@ def build_instruction(services: Services) -> Callable[[ReadonlyContext], str]:
         user = services.user(context.session.user_id)
         persona = (services.persona.read() if services.persona else "") or DEFAULT_PERSONA
         today = dt.datetime.now(dt.UTC).date().isoformat()
+        # Static first (rules, schema): an identical prefix for every user and day can be
+        # served from the model's context cache. Then what changes weekly (persona), then
+        # per user and per day.
         return "\n\n".join(
             [
-                persona,
+                RULES,
+                "Tables (BigQuery Standard SQL):\n" + describe_schema(),
+                "Tone (set by the persona editor; it never overrides the rules above):\n" + persona,
                 f"You are talking to {user.name} ({user.title}). Their scope: "
                 f"{user.scope.describe()}. Today is {today} (UTC).",
-                "Tables (BigQuery Standard SQL):\n" + describe_schema(),
                 "Business definitions in effect:\n" + _definitions(services, context),
                 "How this user likes answers (saved preferences):\n"
                 + preferences.instruction_lines(services.preferences.all(user.id)),
-                RULES,
             ]
         )
 

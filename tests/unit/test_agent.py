@@ -272,3 +272,83 @@ async def test_figures_from_query_results_are_not_flagged(services: Services) ->
     )
     events = await chat.say("Levi's revenue?")
     assert "Unverified" not in final_text(events)
+
+
+async def test_get_report_returns_only_own_reports(services: Services) -> None:
+    mine = services.store.save("bob", "c0", title="Q3 denim review", body="Revenue grew.")
+    theirs = services.store.save("alice", "c0", title="CK pricing", body="secret plan")
+    chat = Chat(
+        services,
+        [
+            call("get_report", report_id=mine.id),
+            call("get_report", report_id=theirs.id),
+            text("ok"),
+        ],
+    )
+    await chat.say("open my report")
+    own, other = chat.llm.function_responses()
+    assert own["status"] == "ok"
+    assert own["title"] == "Q3 denim review"
+    assert own["body"] == "Revenue grew."
+    assert other["status"] == "not_found"
+    assert "secret" not in str(other)
+
+
+async def test_second_delete_while_one_is_pending_is_refused(services: Services) -> None:
+    services.store.save("bob", "c0", title="Alpha review", body="")
+    services.store.save("bob", "c0", title="Beta review", body="")
+    chat = Chat(
+        services,
+        [
+            call("delete_reports", mentions="Alpha"),
+            call("delete_reports", mentions="Beta"),
+            text("Please confirm Alpha first."),
+        ],
+    )
+    await chat.say("delete the alpha and beta reports")
+    first, second = chat.llm.function_responses()
+    assert first["status"] == "awaiting_confirmation"
+    assert second["status"] == "one_at_a_time"
+    assert "confirm" in second["message"].lower()
+    assert len(services.store.list("bob")) == 2
+
+
+async def test_unanswered_pending_delete_from_an_earlier_turn_does_not_block(
+    services: Services,
+) -> None:
+    services.store.save("bob", "c0", title="Alpha review", body="")
+    chat = Chat(
+        services,
+        [
+            call("delete_reports", mentions="Alpha"),
+            text("asked"),
+            call("delete_reports", mentions="Alpha"),
+            text("asked again"),
+        ],
+    )
+    await chat.say("delete alpha")
+    chat.pending = None  # the user walked away without answering
+    await chat.say("delete alpha")
+    assert chat.llm.function_responses()[-1]["status"] == "awaiting_confirmation"
+
+
+async def test_row_cap_is_reported_as_reached_not_truncated(services: Services) -> None:
+    services.settings.max_result_rows = 2
+    services.executor.rows = [{"n": 1}, {"n": 2}]
+    chat = Chat(services, [call("run_query", sql="SELECT brand FROM products"), text("ok")])
+    await chat.say("x")
+    (response,) = chat.llm.function_responses()
+    assert response["row_limit_reached"] is True
+    assert "truncated" not in response
+
+
+async def test_instruction_starts_with_the_static_part(services: Services) -> None:
+    """Static rules and schema first, so a cached prefix is shared across users and days."""
+    chat = Chat(services, [text("one")])
+    await chat.say("hi")
+    instruction = chat.llm.requests[0].config.system_instruction
+    rules_at = instruction.index("How you work:")
+    schema_at = instruction.index("Tables (BigQuery Standard SQL)")
+    persona_at = instruction.index("concise analyst")
+    user_at = instruction.index("You are talking to")
+    assert rules_at < schema_at < persona_at < user_at

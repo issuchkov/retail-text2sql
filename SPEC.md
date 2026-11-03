@@ -163,7 +163,19 @@ Parsed with a SQL parser (sqlglot, BigQuery dialect). A query is rejected unless
   demographic column (traced through aliases, expressions, subqueries and CTEs), the final
   `SELECT` must group (`GROUP BY` or aggregate functions), and neither its group keys nor
   its output columns may derive from a row identifier (`customer_key`, `order_id`,
-  `order_items.id`, `inventory_item_id`);
+  `order_items.id`, `inventory_item_id`). In such a query a row identifier may appear
+  anywhere only as a plain column that is output or grouped by in an inner step, counted
+  (`COUNT`, `COUNT(DISTINCT …)`), compared for equality with another identifier column (a
+  join key), or matched against a subquery of identifiers (`IN (SELECT customer_key …)`).
+  Any other use — comparing it with a value (`=`, `<`, `BETWEEN`, `IN (…)`,
+  `IN UNNEST(…)`), passing it to a function (`STARTS_WITH`, `REGEXP_CONTAINS`, `SUBSTR`,
+  `CAST`), or using it in a condition inside an aggregate (`COUNTIF(customer_key = …)`) —
+  could single out one customer and is rejected. (An independent review found seven such
+  bypasses of an earlier rule that only looked at `=`, `IN` and `LIKE` in filters.) A
+  subquery or CTE that produces identifiers and is cut by `LIMIT` below 5 rows ("the top
+  customer") is rejected too. Narrowing a group by value thresholds (`revenue > X`) to a
+  handful of customers is **not** caught: minimum group sizes are enforced only in
+  production (aggregation thresholds, §4.2).
 - a `LIMIT` is added if absent and capped at the maximum (default 1,000 rows).
 
 Then a **dry run** must pass and estimate under the byte cap (`maximum_bytes_billed`,
@@ -173,8 +185,10 @@ default 1 GB per query) before the real run.
 Tool results returned to the model are capped (rows and characters) and scanned; the final
 answer is scanned before display for PII patterns (emails, phone numbers, street
 addresses, exact coordinates) and redacted (`[redacted]`), with the event logged. Data
-from the database is passed to the model as data, inside delimited blocks, never as
-instructions.
+from the database is passed to the model as structured tool results (JSON function
+responses), never as instructions, and the instruction tells the model to treat them as
+data. A result that hits the row cap is marked `row_limit_reached` (it may or may not be
+complete), so the model aggregates further instead of assuming completeness.
 
 **Grounded figures:** every amount or count of 1,000 or more in the final answer (years
 excepted) must be traceable to a query result in the conversation — a value, a column
@@ -194,6 +208,8 @@ security, backups under a retention policy (HLD).
 ### 5.2 Tools
 - `save_report(title, body, entities)` — saves under the current user and conversation.
 - `list_reports(selector)` — the user's own reports only.
+- `get_report(report_id)` — the full text of one of the user's own reports, so it can be
+  reopened and discussed; `/report <id>` in the CLI shows it without a model call.
 - `delete_reports(selector)` — selector: `ids` | `mentions: <text>` | `this_conversation`
   | `older_than: <date>` (criteria combine with AND). "Client X" = any entity named in a
   report's title, body or entities.
@@ -203,7 +219,9 @@ security, backups under a retention policy (HLD).
    reports are never matched, and the answer does not reveal they exist).
 2. If nothing matches → says so; no confirmation asked.
 3. More than 20 matching reports → nothing is previewed; the agent asks the user to
-   narrow the selector.
+   narrow the selector. One deletion waits for confirmation at a time: a second delete
+   request while one is pending is refused with a message (confirm or cancel the first,
+   then ask again), so no request is silently dropped.
 4. Otherwise the tool pauses with a confirmation request (ADK tool confirmation) showing
    the exact list: count, ids, titles, dates. Nothing is deleted at this point and the
    agent says so.
@@ -234,20 +252,33 @@ security, backups under a retention policy (HLD).
   conversation continues.
 - **CLI never crashes:** every turn is wrapped; errors become a short user message with the
   `trace_id`; state is persisted so the conversation resumes after a restart.
+- **Conversation length:** before each model call, tool results from earlier turns are
+  compacted to their metadata (status, columns, row count, rule or error) — the answers
+  written from them stay in the history — so long conversations stay bounded in tokens and
+  cost. If the model still rejects the request as too long, the user is told to start a new
+  conversation with `/new` instead of seeing a generic error.
 
 ## 7. Observability (R7) — required
 
 - **Trace per turn** (`trace_id`): user message (redacted), each model call (model,
   tokens, latency, finish reason, retries), each tool call (name, arguments, SQL,
-  guard decision, dry-run bytes, rows, latency, errors), confirmations, output-guard
-  redactions, final answer status. Prototype: JSON lines in `logs/traces.jsonl`.
+  guard decision, rows, bytes processed and billed, latency, errors), confirmations,
+  output-guard redactions and unverified figures, the persona version, and the turn status.
+  Prototype: JSON lines in `logs/traces.jsonl`.
+- **Turn status:** `answered` (at least one query succeeded), `no_query` (answered without
+  querying — refusals, schema questions, report management, definitions, preferences), `queries_failed` (every
+  query was rejected or failed), `unverified_figures`, `budget_exhausted`,
+  `awaiting_confirmation`, `error`.
 - **CLI:** `/trace` shows the last turn's timeline; `/stats` shows session metrics;
   `/feedback good|bad [note]` records the user's rating of the last answer in the trace.
-  Traces hold metadata only (no answer text, no result rows); every string is redacted.
-- **Metrics:** turn success rate, refusal rate by reason, SQL first-try success and
-  self-correction rate, empty-result rate, guard rejections by rule, PII redactions,
-  model errors/fallbacks, latency p50/p95 per turn and per step, tokens and BigQuery
-  bytes per turn (cost), confirmation outcomes (confirmed/cancelled), user feedback.
+  Traces hold metadata and the redacted user message — no answer text and no result rows;
+  every string is redacted.
+- **Metrics:** turns by status; data-answer success rate (`answered` among turns that tried
+  to answer with data); share of turns answered without data (refusals and meta
+  questions); SQL first-try success and self-correction rate, empty-result rate, guard
+  rejections by rule, PII redactions, unverified figures, model errors/fallbacks, latency
+  p50/p95 per turn and per step, tokens and BigQuery bytes processed and billed per turn
+  (cost), confirmation outcomes (confirmed/cancelled), user feedback.
 - **Deep dive:** traces say *what* happened; the full message correspondence of a turn —
   user messages, model messages, tool calls with arguments and results, confirmations — is
   kept in the session store, and `scripts/show_conversation.py <trace_id | session_id>`
@@ -272,8 +303,12 @@ security, backups under a retention policy (HLD).
     demo, not yet reviewed by an analyst).
   - Retrieval (prototype, lite): embeddings of question, intent and tags precomputed into
     `golden/index.json`; at query time `find_similar_analyses` embeds the question and
-    returns the top 3 in-scope trios as examples of interpretation, SQL and report style —
-    examples, not answers. If embedding fails, a local lexical (TF-IDF) ranking is used.
+    returns up to 3 in-scope trios above a minimum similarity (embedding cosine 0.70,
+    lexical 0.10 — calibrated: off-topic questions scored at most 0.671, the weakest
+    on-topic match 0.698) as examples of interpretation, SQL and report style — examples,
+    not answers; below it the tool says there is no close example. Trios with status
+    `retired` are never returned. If embedding fails, a local lexical (TF-IDF) ranking is
+    used; a stale index is logged.
   - Design: storage in GCS (one file per trio, versioned), indexed into a vector store with
     metadata filters (tags, brands); hybrid retrieval (vector + keyword); update loop:
     saved reports and positive feedback → candidate trios → analyst review → index;
@@ -290,8 +325,8 @@ security, backups under a retention policy (HLD).
   prototype a persona editor (the CEO in `users.yaml`) runs `/persona` to see it and
   `/persona set <text>` to replace it from the chat — no developer, restart or redeploy; the
   previous version is kept in `data/persona_history/`, and `/persona history` lists the
-  versions. Persona text only sets tone: safety rules, scope and definitions are appended by
-  code after it. Production: a versioned config store with an edit UI, preview against the
+  versions. Persona text only sets tone: safety rules, scope and definitions are added by
+  code and take precedence; the rules come first in the instruction. Production: a versioned config store with an edit UI, preview against the
   eval suite, staged rollout and rollback.
 
 ## 9. Technology choices (detail and reasoning in the technical explanation)

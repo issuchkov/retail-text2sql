@@ -93,8 +93,9 @@ def build_tools(services: Services) -> list[FunctionTool]:
             "columns": result.columns,
             "rows": rows,
             "row_count": result.row_count,
-            "truncated": result.truncated,
+            "row_limit_reached": result.row_limit_reached,
             "bytes_processed": result.bytes_processed,
+            "bytes_billed": result.bytes_billed,
         }
         if len(rows) < result.row_count:
             response["rows_shown"] = len(rows)
@@ -214,6 +215,25 @@ def build_tools(services: Services) -> list[FunctionTool]:
             ]
         }
 
+    def get_report(report_id: int, tool_context: ToolContext) -> dict[str, Any]:
+        """Open one of the user's own saved reports to read or discuss it.
+
+        Args:
+            report_id: The report id (from list_reports).
+        """
+        user = current_user(tool_context)
+        report = services.store.get(user.id, int(report_id))
+        if report is None:
+            return {"status": "not_found", "message": f"You have no saved report {report_id}."}
+        return {
+            "status": "ok",
+            "id": report.id,
+            "title": report.title,
+            "created": report.created_at.date().isoformat(),
+            "entities": report.entities,
+            "body": report.body,
+        }
+
     def delete_reports(
         tool_context: ToolContext,
         ids: list[int] | None = None,
@@ -264,6 +284,17 @@ def build_tools(services: Services) -> list[FunctionTool]:
         except (ValidationError, ValueError) as e:
             return {"status": "invalid_selector", "message": _first_error(e)}
 
+        waiting = tool_context.state.get(PENDING_DELETE) or {}
+        if waiting.get("invocation") == trace_id:  # another delete in this turn awaits an answer
+            return {
+                "status": "one_at_a_time",
+                "message": (
+                    "Another deletion is already waiting for the user's confirmation. Tell the "
+                    "user to confirm or cancel it first, then ask for this one again. Nothing "
+                    "was deleted by this request."
+                ),
+            }
+
         plan = plan_deletion(
             services.store, user.id, selector, tool_context.session.id, trace_id=trace_id
         )
@@ -275,7 +306,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
                 "matched": plan.matched,
                 "message": "Too many reports match; ask the user to narrow the request.",
             }
-        tool_context.state[PENDING_DELETE] = {"ids": plan.ids}
+        tool_context.state[PENDING_DELETE] = {"ids": plan.ids, "invocation": trace_id}
         tool_context.request_confirmation(
             hint=f"Permanently delete {len(plan.ids)} report(s)? Type '{plan.phrase}' to confirm.",
             payload={"items": plan.items, "phrase": plan.phrase},
@@ -301,6 +332,12 @@ def build_tools(services: Services) -> list[FunctionTool]:
         if services.golden is None:
             return {"method": "none", "examples": [], "note": "No examples are available."}
         result = services.golden.search(question, user.scope, k=3)
+        if not result.hits:
+            return {
+                "method": result.method,
+                "examples": [],
+                "note": "No close example; work from the schema and definitions.",
+            }
         return {
             "method": result.method,
             "examples": [trio.as_example(score) for trio, score in result.hits],
@@ -377,6 +414,7 @@ def build_tools(services: Services) -> list[FunctionTool]:
         FunctionTool(describe_data),
         FunctionTool(save_report),
         FunctionTool(list_reports),
+        FunctionTool(get_report),
         FunctionTool(delete_reports),
         FunctionTool(find_similar_analyses),
         FunctionTool(set_definition),

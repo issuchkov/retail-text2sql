@@ -145,3 +145,22 @@ async def test_footer_counts_executed_and_rejected_queries(services) -> None:
     turn = await chat.ask("q")
     assert len(turn.queries) == 2  # /sql still shows both
     assert footer(turn) == f"trace {turn.trace_id} · 1 query · 1 MB · 1 rejected"
+
+
+async def test_report_command_shows_only_own_reports(services) -> None:
+    from rich.console import Console
+
+    from retail_agent.cli.app import App
+
+    mine = services.store.save("bob", "c0", title="Q3 denim review", body="Revenue grew 4%.")
+    theirs = services.store.save("alice", "c0", title="CK pricing", body="secret plan")
+    chat = await open_chat(services, [])
+    console = Console(record=True, width=100)
+    app = App(services, chat, console)
+    await app.handle("report", f"/report {mine.id}")
+    await app.handle("report", f"/report {theirs.id}")
+    await app.handle("report", "/report abc")
+    out = console.export_text()
+    assert "Q3 denim review" in out and "Revenue grew 4%." in out
+    assert "secret plan" not in out and "CK pricing" not in out
+    assert "Usage: /report <id>" in out

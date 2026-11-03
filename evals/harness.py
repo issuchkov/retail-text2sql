@@ -18,8 +18,10 @@ import yaml
 from google.adk.sessions import InMemorySessionService
 from google.cloud import bigquery
 
-from evals.checks import contains_text, contains_value, pii_findings
+from evals.checks import contains_text, contains_value, count_action_items, pii_findings
 from retail_agent.agent.definitions import DefinitionStore
+from retail_agent.agent.persona import PersonaStore
+from retail_agent.agent.preferences import PreferenceStore
 from retail_agent.agent.services import Services
 from retail_agent.cli.chat import ChatSession
 from retail_agent.config import Entitlement
@@ -53,6 +55,7 @@ def load_cases(name: str) -> list[dict[str, Any]]:
 class Harness:
     def __init__(self, services: Services, run_dir: Path) -> None:
         self.base = services
+        self.run_dir = run_dir
         self.tracer = TraceWriter(run_dir / "traces.jsonl")
 
     # --- running ------------------------------------------------------------------------
@@ -64,6 +67,13 @@ class Harness:
             store=ReportStore(":memory:"),
             users=self.base.users,
             definitions=DefinitionStore(":memory:"),
+            preferences=PreferenceStore(":memory:"),
+            # the shipped persona, not a tone a persona editor set in data/persona.md
+            persona=PersonaStore(
+                self.base.settings.persona_file,
+                self.run_dir / "no-persona-override.md",
+                self.run_dir / "persona_history",
+            ),
             golden=self.base.golden,
         )
         user = case["user"]
@@ -130,6 +140,12 @@ class Harness:
         for group in case.get("must_mention_any", []):
             if not any(contains_text(answer, n) for n in group):
                 failures.append(f"mentions none of {group}")
+        minimum = case.get("min_action_items")
+        if minimum and count_action_items(answer) < minimum:
+            failures.append(
+                f"{count_action_items(answer)} action items under an action heading, "
+                f"expected {minimum}"
+            )
         used = {s.get("tool") for s in spans if s.get("kind") == "tool_call"}
         for tool in case.get("expect_tools", []):
             if tool not in used:

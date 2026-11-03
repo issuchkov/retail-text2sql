@@ -3,12 +3,13 @@
 `config/persona.md` is the shipped default. A persona editor's change from the chat is
 written to the runtime file (`data/persona.md`), the replaced text is kept in the history
 directory, and the instruction picks it up on the next turn. The persona only sets tone:
-rules, scope and definitions are appended by code after it.
+rules, scope and definitions are added by code and take precedence over it.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,10 @@ class PersonaStore:
             if path.exists():
                 return path.read_text(encoding="utf-8").strip()
         return ""
+
+    def version(self) -> str:
+        """Short hash of the persona in effect, recorded in every turn's trace."""
+        return hashlib.sha256(self.read().encode("utf-8")).hexdigest()[:12]
 
     def set(self, text: str, *, author: str) -> None:
         new = text.strip()[: self.MAX_CHARS]

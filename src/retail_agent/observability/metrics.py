@@ -59,9 +59,15 @@ def summarize(spans: list[dict[str, Any]]) -> dict[str, Any]:
         if t.get("tool") == "delete_reports" and t.get("status") in {"deleted", "cancelled"}
     )
     n_turns = len(turns)
+    by_status = Counter(t.get("status") for t in turns)
     return {
         "turns": n_turns,
-        "turn_success_rate": _rate(sum(t.get("status") == "ok" for t in turns), n_turns),
+        "turns_by_status": dict(sorted(by_status.items())),
+        # answered among turns that tried to answer with data (no_query ones did not)
+        "data_answer_success_rate": _rate(
+            by_status.get("answered", 0), n_turns - by_status.get("no_query", 0)
+        ),
+        "no_query_share": _rate(by_status.get("no_query", 0), n_turns),
         "errors_by_type": dict(
             Counter(t.get("error") for t in turns if t.get("status") == "error")
         ),
@@ -82,6 +88,7 @@ def summarize(spans: list[dict[str, Any]]) -> dict[str, Any]:
         "tokens_in": sum(m.get("tokens_in") or 0 for m in models),
         "tokens_out": sum(m.get("tokens_out") or 0 for m in models),
         "bytes_processed": sum(t.get("bytes_processed") or 0 for t in turns),
+        "bytes_billed": sum(t.get("bytes_billed") or 0 for t in turns),
         "bytes_per_turn_avg": _rate(sum(t.get("bytes_processed") or 0 for t in turns), n_turns),
         "turn_latency_ms": _latency(
             [t["duration_ms"] for t in turns if t.get("duration_ms") is not None]

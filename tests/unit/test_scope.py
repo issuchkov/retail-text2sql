@@ -133,3 +133,12 @@ def test_schema_states_the_revenue_definition() -> None:
     described = {c.name: c.description for c in LOGICAL_TABLES["orders"]}
     assert "Cancelled" in described["order_revenue"]
     assert "Returned" in described["order_revenue"]
+
+
+def test_recursive_ctes_stay_recursive() -> None:
+    q = prepare(
+        "WITH RECURSIVE r AS (SELECT 1 AS n UNION ALL SELECT n + 1 FROM r WHERE n < 3) "
+        "SELECT n FROM r",
+        BOB,
+    )
+    assert "WITH RECURSIVE" in q.sql.upper()

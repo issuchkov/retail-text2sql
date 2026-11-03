@@ -8,6 +8,7 @@ Transient failures are retried with backoff; everything else becomes a `QueryFai
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import random
 import time
@@ -63,7 +64,7 @@ class QueryResult:
     sql: str
     columns: list[str]
     rows: list[dict[str, Any]]
-    truncated: bool
+    row_limit_reached: bool  # hit the row cap: the result may or may not be complete
     bytes_processed: int
     bytes_billed: int
     duration_ms: int
@@ -107,7 +108,11 @@ class BigQueryExecutor:
             job = self._client.query(
                 query.sql, job_config=config, location=self._location, timeout=self._timeout
             )
-            return job, job.result(timeout=self._timeout, max_results=max_rows)
+            try:
+                return job, job.result(timeout=self._timeout, max_results=max_rows)
+            except Exception:
+                _cancel(job)  # a retry starts a new job; do not leave this one running
+                raise
 
         job, rows_iter = self._with_retries(execute)
         columns = [f.name for f in rows_iter.schema]
@@ -116,7 +121,7 @@ class BigQueryExecutor:
             sql=query.sql,
             columns=columns,
             rows=rows,
-            truncated=len(rows) >= max_rows,
+            row_limit_reached=len(rows) >= max_rows,
             bytes_processed=job.total_bytes_processed or 0,
             bytes_billed=job.total_bytes_billed or 0,
             duration_ms=int((time.monotonic() - started) * 1000),
@@ -170,6 +175,12 @@ def make_executor(settings: Settings) -> BigQueryExecutor:
         timeout_s=settings.query_timeout_s,
         location=settings.bq_location,
     )
+
+
+def _cancel(job: Any) -> None:
+    # best effort: the job may have finished or never started
+    with contextlib.suppress(Exception):
+        job.cancel()
 
 
 def _classify(error: Exception) -> QueryFailed | None:

@@ -28,6 +28,7 @@ COMMANDS = {
     "preferences",
     "persona",
     "reports",
+    "report",
     "new",
     "quit",
     "help",
@@ -43,6 +44,7 @@ Commands:
   /preferences  how you like answers (tables, bullets, depth, charts)
   /persona  the agent's tone; persona editors: /persona set <text>, /persona history
   /reports  list your saved reports
+  /report <id>  show one of your saved reports
   /new      start a new conversation
   /help     this help
   /quit     leave (also Ctrl-D)"""
@@ -117,6 +119,8 @@ class App:
             await self.show_definitions()
         elif name == "reports":
             self.show_reports()
+        elif name == "report":
+            self.show_report(line)
         elif name == "new":
             await self.chat.new_conversation()
             self.console.print("[dim]New conversation.[/]")
@@ -196,7 +200,9 @@ class App:
         table.add_column("value")
         rows = [
             ("Turns", m["turns"]),
-            ("Turn success rate", _pct(m["turn_success_rate"])),
+            ("Turns by status", _counts(m["turns_by_status"])),
+            ("Data answers that succeeded", _pct(m["data_answer_success_rate"])),
+            ("Answered without data (refusals, meta)", _pct(m["no_query_share"])),
             ("SQL first-try success", _pct(m["sql_first_try_success_rate"])),
             ("Self-corrected after a failed query", _pct(m["self_correction_rate"])),
             ("Empty results", _pct(m["empty_result_rate"])),
@@ -207,6 +213,7 @@ class App:
             ("Model attempts", _counts(m["model_attempts_by_outcome"])),
             ("Tokens in / out", f"{m['tokens_in']} / {m['tokens_out']}"),
             ("BigQuery MB per turn", _mb(m["bytes_per_turn_avg"])),
+            ("BigQuery MB billed (total)", _mb(m["bytes_billed"])),
             ("Turn latency p50 / p95 ms", _p(m["turn_latency_ms"])),
             ("Model call latency p50 / p95 ms", _p(m["model_latency_ms"])),
             ("Tool latency p50 / p95 ms", _p(m["tool_latency_ms"])),
@@ -293,6 +300,19 @@ class App:
             self.console.print(table)
         else:
             self.console.print("Usage: /persona | /persona set <text> | /persona history")
+
+    def show_report(self, line: str) -> None:
+        _, _, arg = line.strip().partition(" ")
+        if not arg.strip().isdigit():
+            self.console.print("Usage: /report <id>  (ids are listed by /reports)")
+            return
+        report = self.services.store.get(self.chat.user_id, int(arg))
+        if report is None:
+            self.console.print(f"You have no saved report {arg.strip()}.")
+            return
+        created = report.created_at.date().isoformat()
+        self.console.print(f"[bold]{report.title}[/]  [dim]#{report.id} · {created}[/]")
+        self.console.print(Markdown(report.body))
 
     def show_reports(self) -> None:
         reports = self.services.store.list(self.chat.user_id)
